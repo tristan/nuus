@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row-fluid">
+  {% for release in releases %}
+  <h4>{{ release.id }}</h4>
+  {% for file in release.files %}{{ file.filename }} {% endfor %}
+  {% endfor %}
+</div>
+{% endblock %}

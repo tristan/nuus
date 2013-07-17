@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row-fluid">
+{% for group in groups %}
+<div>{{ group }}</div>
+{% endfor %}
+<form class="form-inline" method="POST">
+  <input type="text" name="group" placeholder="Add Group...">
+  <button type="submit" class="btn"><i class="icon-plus"></i></button>
+</form>
+</div>
+{% endblock %}

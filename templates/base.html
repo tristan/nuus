@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Nuus</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Bootstrap -->
+    <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet" media="screen">
+  </head>
+  <body>
+    <div class="container">
+      <div class="masthead">
+	<h3 class="muted">Nuus</h3>
+	<div class="navbar">
+	  <div class="navbar-inner">
+            <div class="container">
+              <ul class="nav">
+		<li{% if releases is defined %} class="active"{% endif %}><a href="{{ url_for('.releases') }}">Releases</a></li>
+		<li{% if files is defined %} class="active"{% endif %}><a href="{{ url_for('.files') }}">Files</a></li>
+		<li{% if nzbs is defined %} class="active"{% endif %}><a href="{{ url_for('.nzbs') }}">NZBs</a></li>
+		<li{% if groups is defined and not progress %} class="active"{% endif %}><a href="{{ url_for('.groups') }}">Groups</a></li>
+		<li{% if progress is defined %} class="active"{% endif %}><a href="{{ url_for('.status') }}">Indexer</a></li>
+              </ul>
+            </div>
+	  </div>
+	</div><!-- /.navbar -->
+      </div>
+      {% with messages = get_flashed_messages(with_categories=True) %}
+      {% for cat,msg in messages %}
+      <div class="alert alert-{{ cat }}">
+	<button type="button" class="close" data-dismiss="alert">&times;</button>
+	{{ msg }}
+      </div>
+      {% endfor %}
+      {% endwith %}
+      {% block content %}
+      {% endblock content %}
+    </div>
+    <script src="http://code.jquery.com/jquery.js"></script>
+    <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.min.js') }}"></script>
+  </body>
+</html>

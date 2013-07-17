@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row-fluid">
+  {% for group in groups %}
+  <h4>{{ group.id }}</h4>
+  {% if group.status == 'pending' %}
+  <p>Waiting...</p>
+  {% elif group.status == 'updating' %}
+  <p>Updating: {{ group.progress }}% complete</p>
+  {% else %}
+  <p>Finished!</p>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endblock %}

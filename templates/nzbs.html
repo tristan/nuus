@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row-fluid">
+{% for file in nzbs %}
+<div>{{ file.id }}</div>
+{% endfor %}
+</div>
+{% endblock %}
