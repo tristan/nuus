@@ -3,6 +3,7 @@ from flask import Blueprint, url_for, render_template, request, redirect, sessio
 import gzip
 from nntplib import NNTPError
 from nuus import redis_pool, usenet_pool, models, usenet
+from nuus.utils import rkey
 import os
 from redis import StrictRedis
 
@@ -29,14 +30,17 @@ def groups():
         group = request.form.get('group')
         if group.startswith('a.b.'):
             group = 'alt.binaries.' + group[4:]
-        try:
-            usenet = usenet.Usenet(connection_pool=usenet_pool)
-            usenet.group_info(group)
-            redis.sadd('groups', group)
-        except NNTPError as e:
-            flash(e.message, 'error')
+        if not redis.keys(rkey('group', group, 'last_article')):
+            try:
+                usenet = usenet.Usenet(connection_pool=usenet_pool)
+                usenet.group_info(group)
+                redis.set(rkey('group', group, 'last_article'), 0)
+            except NNTPError as e:
+                flash(e.message, 'error')
+        else:
+            flash('group %s already added' % group, 'error')            
         return redirect(url_for('.groups'))
-    groups = redis.smembers('groups')
+    groups = map(lambda x: rkey.split(x)[1], redis.keys(rkey('group','*','last_article')))
     return render_template('groups.html', groups=groups)
 
 @blueprint.route('/s')
