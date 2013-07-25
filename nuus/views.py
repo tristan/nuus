@@ -1,7 +1,10 @@
+import cPickle as pickle
 from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash
-from nuus import redis_pool, usenet_pool, models, usenet
-from redis import StrictRedis
+import gzip
 from nntplib import NNTPError
+from nuus import redis_pool, usenet_pool, models, usenet
+import os
+from redis import StrictRedis
 
 __all__ = ['blueprint']
 
@@ -13,33 +16,11 @@ def index():
 
 @blueprint.route('/r')
 def releases():
-    redis = StrictRedis(connection_pool=redis_pool)
-    keys = redis.keys('release:*:files')
-    releases = []
-    for k in keys:
-        _,subj,_ = k.split(':')
-        try:
-            # TODO: figure out unicode shite
-            unicode(subj)
-        except:
-            continue
-        releases.append(models.ReleaseWrapper(redis, subj))
-    return render_template('releases.html', releases=releases)
+    return "TODO"
 
 @blueprint.route('/f')
 def files():
-    redis = StrictRedis(connection_pool=redis_pool)
-    keys = redis.keys('file:*:filename')
-    files = []
-    for k in keys:
-        _,subj,_ = k.split(':')
-        try:
-            # TODO: figure out unicode shite
-            unicode(subj)
-        except:
-            continue
-        files.append(models.FileWrapper(redis, subj))
-    return render_template('files.html', files=files)
+    return "TODO"
 
 @blueprint.route('/g', methods=["GET", "POST"])
 def groups():
@@ -60,22 +41,28 @@ def groups():
 
 @blueprint.route('/s')
 def status():
-    redis = StrictRedis(connection_pool=redis_pool)
-    groups = redis.smembers('groups')
-    groups = [models.GroupWrapper(redis, g) for g in groups]
-    return render_template('status.html', progress=True, groups=groups)
+    return "TODO"
 
 @blueprint.route('/n')
 def nzbs():
-    redis = StrictRedis(connection_pool=redis_pool)
-    keys = redis.keys('file:*.nzb*:groups')
-    files = []
-    for k in keys:
-        _,subj,_ = k.split(':')
-        try:
-            # TODO: figure out unicode shite
-            unicode(subj)
-        except:
-            continue
-        files.append(models.FileWrapper(redis, subj))
-    return render_template('nzbs.html', nzbs=files)
+    return "TODO"
+
+@blueprint.route('/c')
+@blueprint.route('/c/<string:group>')
+@blueprint.route('/c/<string:group>/<string:page>')
+def cache(group=None,page=None):
+    groups = os.listdir('cache')
+    if group is not None and group in groups:
+        caches = sorted(os.listdir(os.path.join('cache',group)))
+        if page is not None and page in caches:
+            f = gzip.open(os.path.join('cache',group,page), 'r')
+            articles = pickle.load(f)
+            f.close()
+            return render_template('cache.html', cached_groups=groups, 
+                                   group=group, caches=caches, page=page,
+                                   articles=articles)
+        return render_template('cache.html', cached_groups=groups, group=group, caches=caches)
+    return render_template('cache.html', cached_groups=groups)
+        
+        
+    

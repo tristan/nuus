@@ -1,9 +1,11 @@
+import cPickle as pickle
 from itertools import chain
 from functools import wraps
+import nntplib
 import os
 import socket
-import nntplib
-import cPickle as pickle
+import sys
+import time
 
 class ConnectionError(Exception):
     pass
@@ -113,6 +115,7 @@ def retry(fn, max_retries=16):
                 time.sleep(retries)
         print 'max number of retries reached.'
         raise e
+    return wrapper
 
 # TODO: handle random EOFError
 class Usenet(object):
@@ -152,7 +155,7 @@ class Usenet(object):
             while start + idx <= end:
                 #print start, end, idx, len(items), items[idx][0]
                 if idx >= len(items) or int(items[idx][0]) != (start + idx):
-                    items.insert(idx, (str(start + idx), None, None, None, None, None, None))
+                    items.insert(idx, (str(start + idx), None, None, None, None, None, None, None))
                 idx += 1
             articles.extend(items)
             conn.disconnect()

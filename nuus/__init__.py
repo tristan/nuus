@@ -3,8 +3,10 @@ import sys
 import logging
 from flask import Flask
 import redis
+import peewee
 from nuus import usenet
 
+logging.basicConfig()
 logger = logging.getLogger('nuus')
 
 app = Flask(__name__,static_folder=os.path.join('..','static'),template_folder=os.path.join('..','templates'))

@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row-fluid">
+  <ul class="nav nav-pills">
+    {% for grp in cached_groups %}
+    <li{% if grp == group %} class="active"{% endif %}>
+      <a href="{{ url_for('.cache', group=grp) }}">{{ grp }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if caches is defined %}
+  <div class="pagination">
+    <ul>
+      <li><a href="#">&laquo;</a></li>
+      {% for c in caches %}
+      <li{% if c == page %} class="disabled"{% endif %}><a href="{{ url_for('.cache', group=group, page=c) }}">{{ c }}</a></li>
+      {% endfor %}
+      <li><a href="#">&raquo;</a></li>
+    </ul>
+  </div>
+  {% endif %}
+  {% if articles is defined %}
+  <div>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+	  <th>#</th>
+          <th>Poster</th>
+          <th>Date</th>
+          <th>Article ID</th>
+          <th>Size</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in articles %}
+      <tr>
+	<td colspan="5">{{ a[1] }}</td>
+      </tr>
+      <tr>
+	<td>{{ a[0] }}</td>
+	<td>{{ a[2] }}</td>
+	<td>{{ a[3] }}</td>
+	<td>{{ a[4] }}</td>
+	<td>{{ a[6] }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

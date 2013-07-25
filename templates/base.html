@@ -17,8 +17,8 @@
 		<li{% if releases is defined %} class="active"{% endif %}><a href="{{ url_for('.releases') }}">Releases</a></li>
 		<li{% if files is defined %} class="active"{% endif %}><a href="{{ url_for('.files') }}">Files</a></li>
 		<li{% if nzbs is defined %} class="active"{% endif %}><a href="{{ url_for('.nzbs') }}">NZBs</a></li>
-		<li{% if groups is defined and not progress %} class="active"{% endif %}><a href="{{ url_for('.groups') }}">Groups</a></li>
-		<li{% if progress is defined %} class="active"{% endif %}><a href="{{ url_for('.status') }}">Indexer</a></li>
+		<li{% if groups is defined %} class="active"{% endif %}><a href="{{ url_for('.groups') }}">Groups</a></li>
+		<li{% if cached_groups is defined %} class="active"{% endif %}><a href="{{ url_for('.cache') }}">Cache</a></li>
               </ul>
             </div>
 	  </div>
