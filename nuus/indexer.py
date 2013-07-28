@@ -1,22 +1,32 @@
+"""
+Cache storage:
+
+blocks of 100000 articles
+ - post goes into block: post number / 1000000
+ - sort each block
+
+Indexing:
+ - organise tasks per block such that each worker can work on the block
+
+"""
+
 import cPickle as pickle
 from collections import deque
 import datetime
 import gzip
 from multiprocessing import Process, Queue, JoinableQueue, queues
 import os
+import signal
 import sys
 import time
 
 import nuus
 from nuus import usenet
 from nuus.database import Database
-from nuus.utils import rkey
+from nuus.utils import rkey, swallow
 from nuus.cache import utils as cache_utils
 from parser import parse_date
 
-def check_cache(group, start):
-    return os.path.exists(os.path.join('cache',group,str(start)))
-    
 def dump_articles(group, articles):
     try:
         os.makedirs(os.path.join('cache',group))
@@ -26,27 +36,20 @@ def dump_articles(group, articles):
     pickle.dump(articles, f)
     f.close()
 
-def UsenetWorker(wkr_id, input_queue, output_queue, 
-                 usenet_connection_pool=nuus.usenet_pool):
-    u = usenet.Usenet(connection_pool=usenet_connection_pool)
+@swallow(KeyboardInterrupt)
+def UsenetWorker(_taskqueue,_resultqueue):
     while True:
-        # set start time
-        start_time = time.time()
-        # get task
-        task = input_queue.get()
-        if task is None:
-            continue
-        #print wkr_id, 'processing', task.id
-        if not check_cache(task.group, task.start):
+        try:
+            u = usenet.Usenet(connection_pool=nuus.usenet_pool)
+            task = _taskqueue.get(block=False)
             # run task
             articles = u.get_articles(task.group, task.start, task.end)
             if articles:
                 dump_articles(task.group, articles)
-        else:
-            sys.stdout.write('-')
-        # add the time finished for ETA calc
-        input_queue.task_done()
-        output_queue.put((task, time.time()))
+            _resultqueue.put((task, time.time()))
+        except queues.Empty:
+            time.sleep(1)
+            continue
 
 class Task(object):
     def __init__(self, id, group, start, end, complete=False):
@@ -63,7 +66,7 @@ class Indexer(object):
         self._max_workers = max_workers
         self._usenet = usenet.Usenet(connection_pool=usenet_connection_pool)
         self._workers = []
-        self._taskqueue = JoinableQueue()
+        self._taskqueue = Queue()
         self._resultqueue = Queue()
         self._db = Database('indexer.db')
 
@@ -78,8 +81,6 @@ class Indexer(object):
             start += self._articles_per_worker
 
     def run(self):
-        # launch workers
-        self.start_workers()
         # check for new articles
         self.update_articles()
         # populate task queue
@@ -90,14 +91,17 @@ class Indexer(object):
                 task = self._db.get(k)
                 self._taskqueue.put(task)
                 tasks_left += 1
+        # launch workers
+        self.start_workers()
         # watch for completed tasks
         completed = 0
         start_time = time.time()
         last_time = time.time()
         while True:
             try:
-                task, time_taken = self._resultqueue.get(timeout=1)
+                task, time_taken = self._resultqueue.get(block=False)
             except queues.Empty:
+                time.sleep(1)
                 continue
             completed +=1
             tasks_left -= 1
@@ -129,15 +133,17 @@ class Indexer(object):
 
     def shutdown(self):
         """shutdown worker processes"""
+        print 'shutting down...'
         for w in self._workers:
             w.terminate()
+            w.join()
 
     def start_workers(self):
         print 'starting workers...'
         for i in xrange(self._max_workers):
             print i,
             worker = Process(target=UsenetWorker, 
-                             args=(i,self._taskqueue,self._resultqueue))
+                             args=(self._taskqueue,self._resultqueue))
             worker.start()
             self._workers.append(worker)
         
@@ -167,6 +173,5 @@ if __name__ == '__main__':
         sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
         indexer.run()
     except KeyboardInterrupt:
-        print 'Shutting down'
+        print 'forcing shutdown...'
         indexer.shutdown()
-        

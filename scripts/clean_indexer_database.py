@@ -38,7 +38,7 @@ if __name__ == '__main__':
     # create tasks for missing 
     usenet = Usenet(connection_pool=usenet_pool)
     _articles_per_worker = 10000
-    def _create_tasks(self, group, start, end):
+    def _create_tasks(group, start, end):
         # split up start - end into chunks of articles_per_worker length
         while start <= end:
             tid = rkey('t','g', start)
@@ -48,12 +48,14 @@ if __name__ == '__main__':
                 _db.set(tid, task)
             start += _articles_per_worker
     for group in groups:
-        db,created = _open_cache_db(g)
+        print 'checking group', group
+        db,created = _open_cache_db(group)
         ranges = cached_ranges(db=db)
         ginfo = usenet.group_info(group)
         start = ginfo.first
         while len(ranges) > 0:
             if start < ranges[0][0]:
+                print 'creating task:', start, '->', ranges[0][0]-1
                 _create_tasks(group, start, ranges[0][0]-1)
             start = ranges[0][1]+1
             ranges = ranges[1:]

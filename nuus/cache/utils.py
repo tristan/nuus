@@ -1,5 +1,6 @@
 import cPickle as pickle
 import gzip
+from itertools import count, groupby
 from nuus.database import SimpleDatabase
 import os
 import shutil
@@ -62,3 +63,6 @@ def cached_ranges(group=None, db=None):
     L = sorted(idx.keys())
     G = [list(x) for _,x in groupby(L, lambda x,c=count(): next(c)-x)]
     return [(x[0], x[-1]) for x in G]
+
+def write_articles_to_cache(db):
+    pass

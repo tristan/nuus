@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from functools import wraps
 import re
 import time
 
@@ -36,3 +37,16 @@ def parse_date(datestr):
         if p.match(datestr):
             return fn(datestr)
     raise ValueError('Unable to handle date format: "%s"' % datestr)        
+
+def swallow(exception):
+    """Wraps function in a try except and silently swallows the specified exception
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except exception:
+                pass
+        return wrapper
+    return decorator
