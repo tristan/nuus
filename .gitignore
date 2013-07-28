@@ -1,2 +1,4 @@
 nuus/settings.py
+groups.txt
+patterns.txt
 *.pyc

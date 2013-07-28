@@ -140,7 +140,7 @@ class Usenet(object):
         return GroupInfo(res)
 
     @retry
-    def get_articles(self, group, start, end):
+    def get_articles(self, group, start, end, include_empty_results=False):
         articles = []
         if start <= end:
             # we didn't get everything from cache
@@ -151,12 +151,13 @@ class Usenet(object):
             end = max(int(first), min(end, int(last)))
             resp, items = conn.nntp.xover(str(start), str(end))
             # check that items are sequential and add empty articles when they're not
-            idx = 0
-            while start + idx <= end:
-                #print start, end, idx, len(items), items[idx][0]
-                if idx >= len(items) or int(items[idx][0]) != (start + idx):
-                    items.insert(idx, (str(start + idx), None, None, None, None, None, None, None))
-                idx += 1
+            if include_empty_results:
+                idx = 0
+                while start + idx <= end:
+                    #print start, end, idx, len(items), items[idx][0]
+                    if idx >= len(items) or int(items[idx][0]) != (start + idx):
+                        items.insert(idx, (str(start + idx), None, None, None, None, None, None, None))
+                    idx += 1
             articles.extend(items)
             conn.disconnect()
             self.connection_pool.release(conn)

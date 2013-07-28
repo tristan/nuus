@@ -3,15 +3,12 @@ import cPickle as pickle
 from datetime import datetime, timedelta
 import gzip
 import md5
+from nuus.database import CachedDatabase
 import os
+from pyelasticsearch import ElasticSearch, exceptions as esexcep
 import re
 import time
-
-patterns = [
-    # #a.b.moovee typical release format
-    '^\[[0-9]+\]-\[FULL\]-\[#[^\]]+\]-\[ (?P<release_name>[^ ]+) \]-\[(?P<release_part>[0-9]+)/(?P<release_total>[0-9]+)\] - "(?P<file_name>[^"]+)" yEnc \((?P<file_part>[0-9]+)/(?P<file_total>[0-9]+)\)$'
-]
-patterns = map(re.compile, patterns)
+from utils import parse_date
 
 class Segment(object):
     def __eq__(self, s2):
@@ -31,8 +28,7 @@ class Segment(object):
         return dict(number=self.number,bytes=self.bytes,id=self.id)
 
 class File(object):
-    def __init__(self, key, name, total_parts, poster, date=None, subject=None):
-        self.key = key
+    def __init__(self, name, total_parts, poster, id=None, date=None, subject=None):
         self.name = name
         self.total_parts = total_parts
         self.poster = poster
@@ -41,8 +37,8 @@ class File(object):
         self.groups = set()
         self.segments = [None] * total_parts
     def __repr__(self):
-        return "FILE<%s,%s,%s,%s,%s/%s>" % (
-            self.name, self.subject, self.date, self.poster, len(filter(None, self.segments)), self.total_parts)
+        return "FILE<%s,%s/%s>" % (
+            self.name, len(filter(None, self.segments)), self.total_parts)
     def complete(self):
         return all(self.segments)
     def insert_part(self, group, article_id, part, size, subject=None, date=None):
@@ -63,6 +59,7 @@ class File(object):
                     self.subject = subject
                 if date is not None:
                     self.date = date
+                self.id = article_id
     def nzb(self):
         if not self.complete():
             raise ValueError("cannot create nzb for incomplete file")
@@ -76,6 +73,36 @@ class File(object):
             nzb += s.nzb() + '\n'
         nzb += '</segments>\n</file>'
         return nzb
+    def todict(self):
+        return dict(name=self.name,
+                    total_parts=self.total_parts,
+                    poster=self.poster,
+                    date=self.date,
+                    subject=self.subject,
+                    groups=list(self.groups),
+                    segments=[x.todict() for x in self.segments])
+
+class Release(object):
+    def __init__(self, name, total_parts, nfo=None, nzb=None):
+        self.name = name
+        self.total_parts = total_parts
+        self.nfo = nfo
+        self.files = [None] * total_parts
+        self.zero = nzb
+    def __repr__(self):
+        return "RELEASE<%s,%s/%s>" % (
+            self.name, len(filter(None, self.files)), self.total_parts)
+    def add_file(self, id, part, is_nfo=False):
+        if part == 0:
+            # TODO: are all 0/0 for releases nzbs ?
+            self.zero = id
+        self.files[part-1] = id
+        if is_nfo:
+            self.nfo = id
+    def complete(self):
+        return all(self.files)
+    def todict(self):
+        return dict(name=self.name,files=self.files,nfo=self.nfo,zero=self.zero)
 
 nzb_prefix = """<?xml version="1.0" encoding="iso-8859-1" ?>
 <!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.0//EN" "http://www.nzbindex.com/nzb-1.0.dtd">
@@ -101,73 +128,85 @@ def _write_nzb_for_file(f):
         osf.write(nzb_suffix)
         osf.close()
 
-def gen_file_key(release_name, release_part, release_total, file_name, file_total_parts, poster):
+def _gen_idx_key(*args):
     """hashes enough details about a file in hopes it will be unique"""
     m = md5.new()
-    m.update(file_name)
-    m.update(file_total_parts)
-    m.update(release_name)
-    m.update(release_part)
-    m.update(release_total)
-    m.update(poster)
+    for a in args:
+        if a : m.update(str(a))
     return m.hexdigest()
 
-def dt2ut(dt):
-    """datetime to unixtime"""
-    return int(time.mktime(dt.timetuple()))
-
-# (regex to match a date, function to parse the date to unix time)
-date_formats = [
-    (re.compile('^[0-9]+(?:\.[0-9]+)?$'), int),
-    (re.compile('^[0-9]{2} [\w]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} .+$'), 
-     lambda x: dt2ut(datetime.strptime(x, '%d %b %Y %H:%M:%S %Z'))),
-    (re.compile('^[\w]{3}, [0-9]{2} [\w]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}'), 
-     lambda x: dt2ut(datetime.strptime(x[:-6], '%a, %d %b %Y %H:%M:%S') - timedelta(hours=int(x[-5:])/100))),
-]
-
-def parse_date(datestr):
-    """Checks common date formats in an attempt to convert a string into a date (returns unixtime)"""
-    for p, fn in date_formats:
-        if p.match(datestr):
-            return fn(datestr)
-    raise ValueError('Unable to handle date format: "%s"' % datestr)
-        
-
 class Parser(object):
-    def __init__(self):
-        self.releases = dict()
-        self.files = dict()
+    def __init__(self, clean_index=False, patterns=[]):
+        #self._releases = dict()
+        #self._files = dict()
+        self._db = CachedDatabase('parser.db', cached_entries=10000, auto_flush=False)
+        self._patterns = patterns
+        self._errorlog = gzip.open('error.log.gz', 'w')
+        self._es = ElasticSearch('http://localhost:9200')
+        if clean_index:
+            try:
+                self._es.delete_index('nuus')
+            except esexcep.ElasticHttpNotFoundError as e:
+                if not e.error.startswith('IndexMissingException'):
+                    raise
 
     def process_article(self, group, post_number, subject, poster, 
                         date, article_id, references, size, lines):
         if subject is None:
             return
-        for p in patterns:
+        # fix up encodings
+        try:
+            subject = subject.decode('latin-1').encode('utf-8')
+        except:
+            print 'failed to decode "%r"' % subject
+            # then just try to process it anyway
+        for p in self._patterns:
             m = p.match(subject)
             if m:
+                m = m.groupdict() # allow us to .get groups that don't exist (and thus get None for those values)
                 release_name, release_part, release_total, file_name, file_part, file_total = (
-                    m.group('release_name'), m.group('release_part'), m.group('release_total'), 
-                    m.group('file_name'), m.group('file_part'), m.group('file_total')
+                    m.get('release_name'), m.get('release_part'), m.get('release_total'),
+                    m.get('file_name'), m.get('file_part'), m.get('file_total')
                 )
-                filekey = gen_file_key(release_name, release_part, release_total, file_name, file_total, poster)
-                file = self.files.get(filekey, None)
+                filekey = _gen_idx_key(release_name, release_part, release_total, file_name, file_total, poster)
+                file = self._db.get(filekey)
                 if file is None:
-                    file = File(filekey, file_name, int(file_total), poster)
-                    self.files[filekey] = file
-                file.insert_part(group, article_id[1:-1], int(file_part), int(size), subject, parse_date(date))
+                    file = File(file_name, int(file_total), poster)
                 if file.complete():
-                    _write_nzb_for_file(file)
+                    return # skip if it's already complete
+                file.insert_part(group, article_id[1:-1], int(file_part), int(size), subject, parse_date(date))
+                self._db.set(filekey, file)
+                if file.complete():
+                    print '===', file
+                    res = self._es.index('nuus', 'file', file.todict())
+                    file_id = res.get('_id')
+                    if release_name:
+                        rlskey = _gen_idx_key(release_name, release_total)
+                        release = self._db.get(rlskey)
+                        if release is None:
+                            release = Release(release_name, int(release_total))
+                        if release.complete():
+                            return # skip if completed
+                        release.add_file(file_id, int(release_part), file_name.endswith('.nfo'))
+                        self._db.set(rlskey, release)
+                        if release.complete():
+                            print '+++', release
+                            self._es.index('nuus', 'release', release.todict())
+                            self._db.delete(rlskey)
                 return
+        self._errorlog.write('%s\n' % subject)
+        self._errorlog.flush()
         # TODO: log unparsable file name
-        
 
 if __name__ == '__main__':
-    parser = Parser()
+    f = open('patterns.txt')
+    parser = Parser(clean_index=True, patterns=map(re.compile,filter(lambda x: not (x == '' or x.startswith('#')), [x.strip() for x in f.readlines()])))
+    f.close()
     for group in os.listdir('cache'):
         for page in os.listdir(os.path.join('cache',group)):
+            print 'parsing', group, page
             f = gzip.open(os.path.join('cache',group,page), 'r')
             articles = pickle.load(f)
             f.close()
             for article in articles:
                 parser.process_article(group, *article)
-                    
