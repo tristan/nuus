@@ -2,8 +2,6 @@ import os
 import sys
 import logging
 from flask import Flask
-import redis
-import peewee
 from nuus import usenet
 
 logging.basicConfig()
@@ -16,11 +14,6 @@ try:
 except:
     logger.error('error parsing settings.py')
     sys.exit(1)
-
-# redis connection pool
-redis_pool = redis.ConnectionPool(
-    **{x[6:].lower(): app.config[x] for x in
-       filter(lambda x: x.startswith('REDIS_'), app.config.keys())})
 
 # usenet connection pool
 usenet_pool = usenet.ConnectionPool(

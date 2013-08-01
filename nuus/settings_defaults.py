@@ -1,15 +1,9 @@
 
-# settings to pass to redis.Redis()
-REDIS_HOST='localhost'
-REDIS_PORT=6379
-REDIS_DB=0
-#REDIS_PASSWORD=None
-#REDIS_SOCKET_TIMEOUT=None
-#REDIS_CONNECTION_POOL=None
-#REDIS_CHARSET='utf-8'
-#REDIS_ERRORS='strict'
-#REDIS_DECODE_RESPONSES=False
-#REDIS_SOCKET_PATH=None
-
 # default usenet settings
 USENET_MAX_CONNECTIONS=6
+
+# database settings
+DATABASE_HOST='localhost'
+DATABASE_DATABASE='nuus'
+DATABASE_PASSWORD=''
+DATABASE_USER='mysql'
