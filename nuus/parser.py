@@ -1,212 +1,315 @@
-import cgi
-import cPickle as pickle
-from datetime import datetime, timedelta
+import chardet
+import codecs
+import copy
 import gzip
-import md5
-from nuus.database import CachedDatabase
+from nuus import utils
+from nuus.database import engine
+from nuus.database.tables import releases, files, file_groups, segments
+import nuus
 import os
-from pyelasticsearch import ElasticSearch, exceptions as esexcep
 import re
+import shutil
+from sqlalchemy.sql import select, and_, or_, not_
+#from sqlalchemy.sql.expression import collate
+import sys
 import time
-from utils import parse_date
 
-class Segment(object):
-    def __eq__(self, s2):
-        if s2 is None or not isinstance(s2, Segment):
-            return False
-        return self.number == s2.number and self.bytes == s2.bytes and self.id == s2.id
-    def __init__(self, number, bytes, id):
-        self.number = number
-        self.bytes = bytes
-        self.id = id
-    def __repr__(self):
-        return "%s, %s, %s" % (self.number, self.bytes, self.id)
-    def nzb(self):
-        return '<segment bytes="%s" number="%s">%s</segment>' % (
-            self.bytes, self.number, self.id)
-    def todict(self):
-        return dict(number=self.number,bytes=self.bytes,id=self.id)
+CACHE_BASE = nuus.app.config.get('CACHE_BASE')
+CACHE_INBOX = nuus.app.config.get('CACHE_INBOX')
+CACHE_COMPLETE = nuus.app.config.get('CACHE_COMPLETE')
 
-class File(object):
-    def __init__(self, name, total_parts, poster, id=None, date=None, subject=None):
-        self.name = name
-        self.total_parts = total_parts
-        self.poster = poster
-        self.date = date
-        self.subject = subject
-        self.groups = set()
-        self.segments = [None] * total_parts
-    def __repr__(self):
-        return "FILE<%s,%s/%s>" % (
-            self.name, len(filter(None, self.segments)), self.total_parts)
-    def complete(self):
-        return all(self.segments)
-    def insert_part(self, group, article_id, part, size, subject=None, date=None):
-        # TODO: the 'bytes' (i.e. size) value i get seems to be different from what nzbindex.nl gives
-        # sabnzbd doesn't seem to care though, so whatever!
-        if part > self.total_parts:
-            raise ValueError("Got part greater than max part number")
-        s = Segment(part, size, article_id)
-        if self.segments[part-1] is not None:
-            if s != self.segments[part-1]:
-                pass # NOTE: nzbindex.nl seems to just take the first entry, so that's what i'm gonna do!
-        else:
-            self.segments[part-1] = s
-            self.groups.add(group)
-            # set subject to the same values as found in the first article for the file
-            if part == 1:
-                if subject is not None:
-                    self.subject = subject
-                if date is not None:
-                    self.date = date
-                self.id = article_id
-    def nzb(self):
-        if not self.complete():
-            raise ValueError("cannot create nzb for incomplete file")
-        nzb = '<file poster="%s" date="%s" subject="%s">\n' % (
-            cgi.escape(self.poster, quote=True), self.date, cgi.escape(self.subject, quote=True))
-        nzb += '<groups>\n'
-        for g in self.groups:
-            nzb += '<group>%s</group>\n' % g
-        nzb += '</groups>\n<segments>\n'
-        for s in self.segments:
-            nzb += s.nzb() + '\n'
-        nzb += '</segments>\n</file>'
-        return nzb
-    def todict(self):
-        return dict(name=self.name,
-                    total_parts=self.total_parts,
-                    poster=self.poster,
-                    date=self.date,
-                    subject=self.subject,
-                    groups=list(self.groups),
-                    segments=[x.todict() for x in self.segments])
+CACHE_FILE_FORMAT = nuus.app.config.get('CACHE_FILE_FORMAT')
+CACHE_FILE_REGEX = re.compile(nuus.app.config.get('CACHE_FILE_REGEX'))
+CACHE_LINE_FORMAT = nuus.app.config.get('CACHE_LINE_FORMAT')
+CACHE_LINE_REGEX = re.compile(nuus.app.config.get('CACHE_LINE_REGEX'))
 
-class Release(object):
-    def __init__(self, name, total_parts, nfo=None, nzb=None):
-        self.name = name
-        self.total_parts = total_parts
-        self.nfo = nfo
-        self.files = [None] * total_parts
-        self.zero = nzb
-    def __repr__(self):
-        return "RELEASE<%s,%s/%s>" % (
-            self.name, len(filter(None, self.files)), self.total_parts)
-    def add_file(self, id, part, is_nfo=False):
-        if part == 0:
-            # TODO: are all 0/0 for releases nzbs ?
-            self.zero = id
-        self.files[part-1] = id
-        if is_nfo:
-            self.nfo = id
-    def complete(self):
-        return all(self.files)
-    def todict(self):
-        return dict(name=self.name,files=self.files,nfo=self.nfo,zero=self.zero)
-
-nzb_prefix = """<?xml version="1.0" encoding="iso-8859-1" ?>
-<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.0//EN" "http://www.nzbindex.com/nzb-1.0.dtd">
-<!-- NZB Generated by Nuus -->
-<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">"""
-nzb_suffix = """</nzb>
-"""
-
-# UTILS
-def _write_nzb_for_file(f):
-    """http://wiki.sabnzbd.org/nzb-specs"""
-    try:
-        os.makedirs('nzbs')
-    except OSError:
-        pass
-    osfn = os.path.join('nzbs',f.name + '.nzb')
-    if os.path.exists(osfn):
-        print osfn, 'already exists'
-    else:
-        osf = open(osfn, 'w')
-        osf.write(nzb_prefix + '\n')
-        osf.write(f.nzb() + '\n')
-        osf.write(nzb_suffix)
-        osf.close()
-
-def _gen_idx_key(*args):
-    """hashes enough details about a file in hopes it will be unique"""
-    m = md5.new()
-    for a in args:
-        if a : m.update(str(a))
-    return m.hexdigest()
 
 class Parser(object):
-    def __init__(self, clean_index=False, patterns=[]):
-        #self._releases = dict()
-        #self._files = dict()
-        self._db = CachedDatabase('parser.db', cached_entries=10000, auto_flush=False)
+    def __init__(self, patterns):
         self._patterns = patterns
-        self._errorlog = gzip.open('error.log.gz', 'w')
-        self._es = ElasticSearch('http://localhost:9200')
-        if clean_index:
-            try:
-                self._es.delete_index('nuus')
-            except esexcep.ElasticHttpNotFoundError as e:
-                if not e.error.startswith('IndexMissingException'):
-                    raise
 
-    def process_article(self, group, post_number, subject, poster, 
-                        date, article_id, references, size, lines):
-        if subject is None:
+    def run(self):
+        print CACHE_FILE_REGEX.pattern
+        for filename in os.listdir(CACHE_INBOX):
+            self.parse_file(filename)
+            shutil.move(os.path.abspath(os.path.join(CACHE_INBOX, filename)),
+                        os.path.abspath(os.path.join(CACHE_COMPLETE, filename)))
+
+
+    def parse_file(self, filename):
+        m_filename = CACHE_FILE_REGEX.match(filename)
+        if m_filename and m_filename.group('status') == 'new':
+            group = m_filename.group('group')
+            page = m_filename.group('page')
+            print 'parsing group: %s, page: %s' % (group, page),
+            start_time = time.time()
+            skipped_count = 0
+            matched_count = 0
+            in_fp = os.path.join(CACHE_INBOX, filename)
+            matches = []
+            sk_fp = os.path.join(CACHE_INBOX, CACHE_FILE_FORMAT.format(group=group,page=page,status='skipped'))
+            with gzip.open(in_fp, 'r') as f, gzip.open(sk_fp, 'w') as skipped_out:
+                while True:
+                    line = f.readline()
+                    if line == '':
+                        break # eof reached
+                    decodedline = line.decode('utf-8')
+                    decodedline = line
+                    matched = self.parse_line(group, decodedline)
+                    if matched:
+                        matches.append(matched)
+                        matched_count += 1
+                    else:
+                        skipped_out.write(line)
+                        skipped_count += 1
+            if matched_count > 0:
+                self.process_matches(matches)
+            print 'matched: %s, skipped: %s, time: %s' % (matched_count, skipped_count, utils.time_taken_to_str(time.time() - start_time))
+
+    def parse_line(self, group, line):
+        m = CACHE_LINE_REGEX.match(line)
+        if not m:
+            return None
+        subject = m.group('subject')
+        for pat in self._patterns:
+            n = pat.match(subject)
+            if n:
+                return dict([('group',group)] + m.groupdict().items() + n.groupdict().items())
+        return None
+
+    def process_matches(self, matches):
+        _releases = dict()
+        _files = dict()
+        _fgs = set()
+        _segs = dict()
+        mkkey = lambda t: tuple(map(lambda x: str(x).lower(), t))
+        for m in matches:
+            release, f, fg, s = self.process_match(**m)
+            _releases[mkkey((release['name'],release['poster']))] = release
+            _files[mkkey((release['name'],release['poster'],f['name']))] = f
+            _fgs.add(mkkey((release['name'],release['poster'],f['name'],fg['group'])))
+            _segs[mkkey((release['name'],release['poster'],f['name'],s['article_id']))] = s
+        conn = engine.connect()
+        if not _releases:
+            raise Exception('releases is empty!!!!')
             return
-        # fix up encodings
-        try:
-            subject = subject.decode('latin-1').encode('utf-8')
-        except:
-            print 'failed to decode "%r"' % subject
-            # then just try to process it anyway
-        for p in self._patterns:
-            m = p.match(subject)
-            if m:
-                m = m.groupdict() # allow us to .get groups that don't exist (and thus get None for those values)
-                release_name, release_part, release_total, file_name, file_part, file_total = (
-                    m.get('release_name'), m.get('release_part'), m.get('release_total'),
-                    m.get('file_name'), m.get('file_part'), m.get('file_total')
-                )
-                filekey = _gen_idx_key(release_name, release_part, release_total, file_name, file_total, poster)
-                file = self._db.get(filekey)
-                if file is None:
-                    file = File(file_name, int(file_total), poster)
-                if file.complete():
-                    return # skip if it's already complete
-                file.insert_part(group, article_id[1:-1], int(file_part), int(size), subject, parse_date(date))
-                self._db.set(filekey, file)
-                if file.complete():
-                    print '===', file
-                    res = self._es.index('nuus', 'file', file.todict())
-                    file_id = res.get('_id')
-                    if release_name:
-                        rlskey = _gen_idx_key(release_name, release_total)
-                        release = self._db.get(rlskey)
-                        if release is None:
-                            release = Release(release_name, int(release_total))
-                        if release.complete():
-                            return # skip if completed
-                        release.add_file(file_id, int(release_part), file_name.endswith('.nfo'))
-                        self._db.set(rlskey, release)
-                        if release.complete():
-                            print '+++', release
-                            self._es.index('nuus', 'release', release.todict())
-                            self._db.delete(rlskey)
-                return
-        self._errorlog.write('%s\n' % subject)
-        self._errorlog.flush()
-        # TODO: log unparsable file name
+        from pprint import pprint
+        #pprint(_releases)
+        new_releases = copy.copy(_releases)
+        old_releases = copy.copy(_releases)
+        _releases = dict()
+        # get all existing releases
+        s1 = reduce(lambda a,x: a + (and_(releases.c.name == x[0], releases.c.poster == x[1]),), 
+                    old_releases.keys(), tuple())
+        s = select([releases]).where(or_(*s1))
+        results = conn.execute(s).fetchall()
+        for row in results:
+            key = mkkey((row['name'], row['poster']))
+            _releases[key] = row
+            try:
+                del new_releases[key]
+            except:
+                pprint(results)
+                pprint(old_releases)
+                print s
+                raise
+        if new_releases:
+            # create new releases
+            new_releases = new_releases.values()
+            print 'new releases:', len(new_releases),
+            rid = conn.execute(releases.insert(), new_releases).lastrowid
+            # assign ids (i abuse .lastrowid so i don't have to query the db again)
+            for r in new_releases:
+                key = mkkey((r['name'], r['poster']))
+                r['id'] = rid
+                _releases[key] = r
+                rid += 1
+            new_releases = None
+
+        # fill in release_id for files
+        s = []
+        for key in _files.keys():
+            f = _files[key]
+            f['release_id'] = _releases[key[:2]]['id']
+            s.append(and_(files.c.release_id == f['release_id'], files.c.name == f['name']))
+        # re-index releases
+        _releases = {r['id']: r for r in _releases.values()}
+
+        new_files = copy.copy(_files)
+        old_files = copy.copy(_files)
+        _files = dict()
+        # get existing files
+        s = select([files]).where(or_(*s))
+        results = conn.execute(s).fetchall()
+        for row in results:
+            key = mkkey((_releases[row['release_id']]['name'], _releases[row['release_id']]['poster'], row['name']))
+            _files[key] = row
+            del new_files[key]
+        if new_files:
+            new_files = new_files.values()
+            print 'new files:', len(new_files),
+            rid = conn.execute(files.insert(), new_files).lastrowid
+            for f in new_files:
+                key = mkkey((_releases[f['release_id']]['name'], _releases[f['release_id']]['poster'], f['name']))
+                f['id'] = rid
+                _files[key] = f
+                rid += 1
+            new_files = None
+
+        # fill in file_id for file_groups
+        new_fgs = set()
+        s = []
+        for key in _fgs:
+            group = key[-1]
+            file_id = _files[key[:3]]['id']
+            s.append(and_(file_groups.c.file_id == file_id, file_groups.c.group == group))
+            new_fgs.add(mkkey((file_id,group)))
+        # get existing file_groups
+        s = select([file_groups]).where(or_(*s))
+        results = conn.execute(s).fetchall()
+        for row in results:
+            key = mkkey((row['file_id'],row['group']))
+            try:
+                new_fgs.remove(key)
+            except:
+                pprint(results)
+                pprint(_fgs)
+                raise
+
+        # fill in file_id for segments
+        s = []
+        for key in _segs.keys():
+            _segs[key]['file_id'] = _files[key[:3]]['id']
+            s.append(segments.c.article_id == _segs[key]['article_id'])
+        # re-index segments
+        _segs = {s['article_id']: s for s in _segs.values()}
+        # get existing segments
+        s = select([segments]).where(or_(*s))
+        for row in conn.execute(s):
+            del _segs[row['article_id']]
+
+        # transactional insert for fgs and segs
+        with conn.begin() as trans:
+            if _segs:
+                print 'new segments:', len(_segs),
+                conn.execute(segments.insert(), _segs.values())
+            if new_fgs:
+                conn.execute(file_groups.insert(), [dict(file_id=x[0],group=x[1]) for x in new_fgs])
+            
+
+    def process_match(self, group, article_id, poster, date, size,
+                      file_name, file_part, file_total,
+                      release_name, release_part=None, release_total=None, 
+                      **unused):
+        release_total = int(release_total) if release_total else -1
+        release_part =  int(release_part) if release_part else None
+        date = int(date)
+        size = int(size)
+        file_part = int(file_part)
+        file_total = int(file_total)
+        #release_name = release_name.decode(chardet.detect(release_name)['encoding'])
+        #file_name = file_name.decode(chardet.detect(file_name)['encoding'])
+        #poster = poster.decode(chardet.detect(poster)['encoding'])
+        #article_id = article_id.decode(chardet.detect(article_id)['encoding'])
+
+        release = dict(name=release_name,
+                       poster=poster,
+                       date=date,
+                       parts=release_total)
+        f = dict(name=file_name,
+                 parts=file_total)
+        fg = dict(group=group)
+        seg = dict(article_id=article_id,
+                   number=file_part,
+                   size=size)
+        return release, f, fg, seg
+        
+
+    def _old_process_match(self, **kwargs):
+        conn = engine.connect()
+        # process defaults
+        release_total = int(release_total) if release_total else -1
+        release_part =  int(release_part) if release_part else None
+        date = int(date)
+        size = int(size)
+        file_part = int(file_part)
+        file_total = int(file_total)
+
+        # find existing release (or create)
+        s = select([releases]).where(and_(
+            releases.c.name == release_name, 
+            releases.c.poster == poster,
+            releases.c.parts == release_total
+        ))
+        rval = conn.execute(s)
+        release = rval.fetchone()
+        rval.close()
+        if release is None:
+            # create a new release
+            release = dict(name=release_name,
+                           poster=poster,
+                           date=date,
+                           parts=release_total)
+            rval = conn.execute(releases.insert(), **release)
+            release['id'] = rval.inserted_primary_key[0]
+            rval.close()
+        
+        # find existing file (or create)
+        s = select([files]).where(and_(
+            files.c.release_id == release['id'],
+            files.c.name == file_name,
+            files.c.parts == file_total
+        ))
+        rval = conn.execute(s)
+        f = rval.fetchone()
+        rval.close()
+        if f is None:
+            f = dict(release_id=release['id'],
+                     name=file_name,
+                     parts=file_total)
+            rval = conn.execute(files.insert(), **f)
+            f['id'] = rval.inserted_primary_key[0]
+            rval.close()
+            with conn.begin():
+                # add nfo or nzb to the release if required
+                if (not release.has_key('nfo')) and file_name.endswith('.nfo'):
+                    conn.execute(releases.update().where(releases.c.id == release['id']).values(nfo=f['id'])).close()
+                elif (not release.has_key('nzb')) and file_name.endswith('.nzb'):
+                    conn.execute(releases.update().where(releases.c.id == release['id']).values(nzb=f['id'])).close()
+                # add group to file (shouldn't be a duplicate if the file has just been created)
+                conn.execute(file_groups.insert(), 
+                             file_id=f['id'],group=group)
+                # add segment (shouldn't be a duplicate if the file has just been created)
+                conn.execute(
+                    segments.insert(),
+                    file_id=f['id'],article_id=article_id,number=file_part, size=size)
+        else:
+            s = select([file_groups]).where(and_(
+                file_groups.c.file_id == f['id'],
+                file_groups.c.group == group,
+            ))
+            rval = conn.execute(s)
+            fg = rval.fetchone()
+            rval.close()
+            if fg is None:
+                conn.execute(
+                    file_groups.insert(), 
+                    file_id=f['id'],group=group
+                ).close()
+            s = select([segments]).where(segments.c.article_id == article_id)
+            rval = conn.execute(s)
+            seg = rval.fetchone()
+            rval.close()
+            if seg is None:
+                conn.execute(
+                    segments.insert(),
+                    file_id=f['id'],article_id=article_id,number=file_part, size=size
+                ).close()
 
 if __name__ == '__main__':
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
     f = open('patterns.txt')
-    parser = Parser(clean_index=True, patterns=map(re.compile,filter(lambda x: not (x == '' or x.startswith('#')), [x.strip() for x in f.readlines()])))
+    patterns = [re.compile(p, re.I) for p in filter(lambda x: not (x == '' or x.startswith('#')), [x.strip() for x in f.readlines()])]
     f.close()
-    for group in os.listdir('cache'):
-        for page in os.listdir(os.path.join('cache',group)):
-            print 'parsing', group, page
-            f = gzip.open(os.path.join('cache',group,page), 'r')
-            articles = pickle.load(f)
-            f.close()
-            for article in articles:
-                parser.process_article(group, *article)
+    parser = Parser(patterns)
+    parser.run()

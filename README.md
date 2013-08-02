@@ -11,6 +11,21 @@
 
     python nuus
 
+## database setup
+
+configure db settings in `settings.py`
+
+    DATABASE_USER # defaults to 'mysql'
+    DATABASE_HOST # defaults to 'localhost'
+    DATABASE_PASSWORD # defaults to ''
+    DATABASE_NAME # defaults to 'nuus'
+
+run the following:
+
+    mysql -u {user}
+    create database nuus default character set = 'utf8' default collate = 'utf8_general_cs';
+    python nuus/database/tables.py
+
 ## configure indexer and parser
 
 The indexer reads a file `groups.txt` to know which groups to process. create this file and add the groups (one per line) you want to index.

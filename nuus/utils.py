@@ -44,6 +44,24 @@ def parse_date(datestr):
             return fn(m.groups() or (datestr,))
     raise ValueError('Unable to handle date format: "%s"' % datestr)        
 
+def time_taken_to_str(eta):
+    eta_secs = eta % 60
+    eta -= eta_secs
+    eta /= 60
+    eta_mins = eta % 60
+    eta -= eta_mins
+    eta /= 60
+    eta_hours = eta
+    eta = ''
+    if eta_hours:
+        eta = '%sh' % eta_hours
+    if eta_mins:
+        eta += '%sm' % eta_mins
+    elif eta_hours:
+        eta += '0m'
+    eta += '%ss' % int(eta_secs)
+    return eta
+
 def swallow(exception):
     """Wraps function in a try except and silently swallows the specified exception
     """
