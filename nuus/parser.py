@@ -47,7 +47,7 @@ class Parser(object):
             matched_count = 0
             in_fp = os.path.join(CACHE_INBOX, filename)
             matches = []
-            sk_fp = os.path.join(CACHE_INBOX, CACHE_FILE_FORMAT.format(group=group,page=page,status='skipped'))
+            sk_fp = os.path.join(CACHE_SKIPPED, CACHE_FILE_FORMAT.format(group=group,page=page,status='skipped'))
             with gzip.open(in_fp, 'r') as f, gzip.open(sk_fp, 'w') as skipped_out:
                 while True:
                     line = f.readline()
@@ -109,10 +109,7 @@ class Parser(object):
             try:
                 del new_releases[key]
             except:
-                pprint(results)
-                pprint(old_releases)
-                print s
-                raise
+                print '\nDUPLICATE FOUND: %s' % row
         if new_releases:
             # create new releases
             new_releases = new_releases.values()

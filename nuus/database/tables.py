@@ -3,6 +3,8 @@ from nuus.database import engine
 
 metadata = MetaData()
 
+### RELEASE TABLES
+
 releases = Table(
     'releases', metadata,
     Column('id', Integer, primary_key=True),
@@ -47,9 +49,43 @@ segments = Table(
     mysql_charset='utf8'
 )
 
+#### INDEXER TABLES
+
+tasks = Table(
+    'tasks', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('group', Integer, nullable=False),
+    Column('start', Integer, nullable=False),
+    Column('end', Integer, nullable=False),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
+groups = Table(
+    'groups', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('group', String(64), nullable=False, unique=True),
+    Column('last_post_checked', Integer, default=0),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
+#### USER TABLE
+
+users = Table(
+    'users', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('username', String(32), unique=True),
+    Column('password', String(32), nullable=False),
+    Column('sabnzbd_host', String(256), default='http://127.0.0.1:8080/'),
+    Column('sabnzbd_apikey', String(32)),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
 def create_tables():
     metadata.create_all(engine)
 
 if __name__ == '__main__':
-    metadata.drop_all(engine)
+    #metadata.drop_all(engine)
     create_tables()

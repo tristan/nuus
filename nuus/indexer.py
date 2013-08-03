@@ -14,50 +14,45 @@ import cPickle as pickle
 from collections import deque
 import datetime
 import gzip
-from multiprocessing import Process, Queue, JoinableQueue, queues
 import os
-import signal
 import sys
 import time
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import nuus
 from nuus import usenet
-from nuus.database import Database
-from nuus.utils import rkey, swallow
-from nuus.cache import utils as cache_utils
-from parser import parse_date
+from nuus.utils import rkey, swallow, parse_date, time_taken_to_str, time_remaining
+from nuus.database import engine, tables
+import re
+from sqlalchemy.sql import select
 
-def dump_articles(group, articles):
-    try:
-        os.makedirs(os.path.join('cache',group))
-    except OSError:
-        pass
-    f = gzip.open(os.path.join('cache',group,articles[0][0]), 'w')
-    pickle.dump(articles, f)
-    f.close()
+CACHE_BASE = nuus.app.config.get('CACHE_BASE')
+CACHE_INBOX = nuus.app.config.get('CACHE_INBOX')
+CACHE_COMPLETE = nuus.app.config.get('CACHE_COMPLETE')
 
-@swallow(KeyboardInterrupt)
-def UsenetWorker(_taskqueue,_resultqueue):
-    while True:
-        try:
-            u = usenet.Usenet(connection_pool=nuus.usenet_pool)
-            task = _taskqueue.get(block=False)
-            # run task
-            articles = u.get_articles(task.group, task.start, task.end)
-            if articles:
-                dump_articles(task.group, articles)
-            _resultqueue.put((task, time.time()))
-        except queues.Empty:
-            time.sleep(1)
-            continue
+CACHE_FILE_FORMAT = nuus.app.config.get('CACHE_FILE_FORMAT')
+CACHE_FILE_REGEX = re.compile(nuus.app.config.get('CACHE_FILE_REGEX'))
+CACHE_LINE_FORMAT = nuus.app.config.get('CACHE_LINE_FORMAT')
+CACHE_LINE_REGEX = re.compile(nuus.app.config.get('CACHE_LINE_REGEX'))
 
-class Task(object):
-    def __init__(self, id, group, start, end, complete=False):
-        self.id = id
-        self.group = group
-        self.start = start
-        self.end = end
-        self.complete = complete
+def enc(s):
+    return s.decode('latin-1').encode('utf-8')
+
+def download_headers(id, group, start, end):
+    u = usenet.Usenet(connection_pool=nuus.usenet_pool)
+    articles = u.get_articles(group, start, end)
+    if articles:
+        fn = os.path.join(CACHE_INBOX, CACHE_FILE_FORMAT.format(
+            group=group,page='%s-%s' % (id, start),status='new'))
+        with gzip.open(fn, 'w') as f:
+            for number, subject, poster, sdate, art_id, _, size, _ in articles:
+                f.write(CACHE_LINE_FORMAT.format(
+                    article_id=enc(art_id[1:-1]),
+                    subject=enc(subject),
+                    poster=enc(poster),
+                    date=parse_date(sdate),
+                    size=size))
+    return (id, len(articles))
 
 class Indexer(object):
     def __init__(self, articles_per_worker=10000, max_workers=8,
@@ -65,107 +60,56 @@ class Indexer(object):
         self._articles_per_worker = articles_per_worker
         self._max_workers = max_workers
         self._usenet = usenet.Usenet(connection_pool=usenet_connection_pool)
-        self._workers = []
-        self._taskqueue = Queue()
-        self._resultqueue = Queue()
-        self._db = Database('indexer.db')
-
-    def _create_tasks(self, group, start, end):
-        # split up start - end into chunks of articles_per_worker length
-        while start <= end:
-            tid = rkey('t','g', start)
-            if self._db.get(tid) is None:
-                task = Task(tid, group, start, 
-                            min(end, start+self._articles_per_worker-1))
-                self._db.set(tid, task)
-            start += self._articles_per_worker
 
     def run(self):
-        # check for new articles
-        self.update_articles()
-        # populate task queue
-        tasks_left = 0
-        for k in self._db.keys():
-            pfx = rkey('t','g')
-            if isinstance(k, basestring) and k.startswith(pfx):
-                task = self._db.get(k)
-                self._taskqueue.put(task)
-                tasks_left += 1
-        # launch workers
-        self.start_workers()
-        # watch for completed tasks
-        completed = 0
+        conn = engine.connect()
+        # get groups
+        groups = conn.execute(select([tables.groups])).fetchall()
+        # create new tasks
+        with conn.begin() as trans:
+            for g in groups:
+                # get group info
+                gi = self._usenet.group_info(g['group'])
+                st = max(gi.first, g['last_post_checked']+1)
+                while st <= gi.last:
+                    end = min(gi.last, st+self._articles_per_worker)
+                    conn.execute(tables.tasks.insert(), **dict(group=g['id'],start=st,end=end))
+                    st = end+1
+                conn.execute(tables.groups.update().values({
+                    tables.groups.c.last_post_checked: gi.last
+                }).where(tables.groups.c.id == g['id']))
+        # reindex groups by id
+        groups = {g['id']:g for g in groups}
+        # get all tasks
+        tasks = []
+        for row in conn.execute(select([tables.tasks])):
+            tasks.append(dict(id=row['id'],
+                              group=groups[row['group']]['group'],
+                              start=row['start'],
+                              end=row['end']))
+
+        # start workers
+        futures = []
+        print 'Starting header downloads with %s tasks' % len(tasks)
         start_time = time.time()
-        last_time = time.time()
-        while True:
-            try:
-                task, time_taken = self._resultqueue.get(block=False)
-            except queues.Empty:
-                time.sleep(1)
-                continue
-            completed +=1
-            tasks_left -= 1
-            self._db.delete(task.id)
-            if tasks_left <= 0:
-                break
-            elif completed % 10 == 0 or tasks_left < 50:
-                avg_time = (time_taken - start_time) / completed
-                eta = avg_time * tasks_left
-                eta_secs = eta % 60
-                eta -= eta_secs
-                eta /= 60
-                eta_mins = eta % 60
-                eta -= eta_mins
-                eta /= 60
-                eta_hours = eta
-                eta = ''
-                if eta_hours:
-                    eta = '%sh' % eta_hours
-                if eta_mins:
-                    eta += '%sm' % eta_mins
-                elif eta_hours:
-                    eta += '0m'
-                eta += '%ss' % int(eta_secs)
-                print 'Completed: %s, Remaining: %s, ETR: %s' % (
-                    completed, tasks_left, eta)
-        print 'all tasks completed'
-        self.shutdown()
+        with ProcessPoolExecutor(max_workers=self._max_workers) as executor:
+            # queue up tasks
+            for task in tasks:
+                futures.append(executor.submit(download_headers, **task))
 
-    def shutdown(self):
-        """shutdown worker processes"""
-        print 'shutting down...'
-        for w in self._workers:
-            w.terminate()
-            w.join()
-
-    def start_workers(self):
-        print 'starting workers...'
-        for i in xrange(self._max_workers):
-            print i,
-            worker = Process(target=UsenetWorker, 
-                             args=(self._taskqueue,self._resultqueue))
-            worker.start()
-            self._workers.append(worker)
-        
-    def update_articles(self):
-        print 'updating articles...'
-        gf = open('groups.txt', 'r')
-        groups = gf.readlines()
-        for group in (g.strip() for g in groups):
-            if group.startswith('#') or group == '':
-                continue
-            print group,
-            last_article_key = rkey('g',group,'la')
-            last_checked = self._db.get(last_article_key) or 0
-            ginfo = self._usenet.group_info(group)
-            last_checked = max(ginfo.first-1, last_checked)
-            if ginfo.last > last_checked:
-                print last_checked, '->', ginfo.last
-                self._create_tasks(group, last_checked+1, ginfo.last)
-                self._db.set(last_article_key, ginfo.last)
-            else:
-                print 'up to date'
-        print 'done'
+            # get results
+            new_articles = 0
+            tasks_complete = 0
+            report_status_on = (len(tasks) / 100) or 1
+            for f in as_completed(futures):
+                tid, arts = f.result()
+                conn.execute(table.tasks.delete().where(table.tasks.c.id == tid))
+                new_articles += arts
+                tasks_complete += 1
+                if tasks_complete % report_status_on == 0:
+                    print 'Completed: %s, Remaining: %s, ETR: %s' % (
+                        tasks_complete, len(tasks) - tasks_complete, 
+                        time_remaining(start_time, tasks_complete, len(tasks) - tasks_complete))
 
 if __name__ == '__main__':
     indexer = Indexer()

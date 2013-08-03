@@ -44,23 +44,62 @@ def parse_date(datestr):
             return fn(m.groups() or (datestr,))
     raise ValueError('Unable to handle date format: "%s"' % datestr)        
 
-def time_taken_to_str(eta):
-    eta_secs = eta % 60
-    eta -= eta_secs
-    eta /= 60
-    eta_mins = eta % 60
-    eta -= eta_mins
-    eta /= 60
-    eta_hours = eta
-    eta = ''
-    if eta_hours:
-        eta = '%sh' % eta_hours
-    if eta_mins:
-        eta += '%sm' % eta_mins
-    elif eta_hours:
-        eta += '0m'
-    eta += '%ss' % int(eta_secs)
-    return eta
+def time_taken_to_str(since):
+    delta_d, delta_h, delta_m, delta_s = date_difference(since)
+    return 'FUCK'
+
+def date_difference(since, until=datetime.now(), offset=None):
+    if isinstance(since, (int, long, float)):
+        since = datetime.fromtimestamp(since)
+    if until:
+        if isinstance(until, (int, long, float)):
+            until = datetime.fromtimestamp(until)
+        dt = until - since
+        offset = dt.seconds + (dt.days * 60*60*24)
+    if offset:
+        delta_s = offset % 60
+        offset /= 60
+        delta_m = offset % 60
+        offset /= 60
+        delta_h = offset % 24
+        offset /= 24
+        delta_d = offset
+    else:
+        raise ValueError("Must supply until or offset (from since)")
+ 
+    return (delta_d, delta_h, delta_m, delta_s)
+
+def humanize_date_difference(since, until=datetime.now(), offset=None):
+    delta_d, delta_h, delta_m, delta_s = date_difference(since, until, offset)
+
+    if delta_d > 0:
+        return "%d days ago" % delta_d
+    if delta_h > 0:
+        return "%dh%dm ago" % (delta_h, delta_m)
+    if delta_m > 0:
+        return "%dm%ds ago" % (delta_m, delta_s)
+    else:
+        return "%ds ago" % delta_s
+
+def time_remaining(start_time, things_completed, things_remainings, now=time.time()):
+    time_taken = now - start_time
+    time_per_thing = time_taken / things_completed
+    etr = now + time_per_thing * things_remainings
+    
+    delta_d, delta_h, delta_m, delta_s = date_difference(now, etr)
+
+    rval = ''
+    if delta_d > 0:
+        rval += "%d days " % delta_d
+    if delta_h > 0:
+        rval += "%d hours " % delta_h
+    if delta_m > 0:
+        rval += "%d mins " % delta_m
+    if delta_s > 0:
+        rval += "%d secs " % delta_s
+    
+    return rval[:-1]
+    
 
 def swallow(exception):
     """Wraps function in a try except and silently swallows the specified exception

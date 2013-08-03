@@ -1,72 +1,125 @@
-import cPickle as pickle
-from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash
-import gzip
-from nntplib import NNTPError
-from nuus import redis_pool, usenet_pool, models, usenet
-from nuus.utils import rkey
+from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash, current_app
+import md5
+from nuus.utils import rkey, humanize_date_difference
+from nuus.database import engine, tables
 import os
-from redis import StrictRedis
+import re
+from sqlalchemy.sql import select, or_, func
 
 __all__ = ['blueprint']
 
 blueprint = Blueprint('nuus', __name__)
 
-@blueprint.route('/')
+def get_user(user_id=None):
+    if user_id is None:
+        user_id = session.get('user_id')
+    if user_id is None:
+        return None
+    conn = engine.connect()
+    sel = select([tables.users]).where(tables.users.c.id == user_id)
+    user = conn.execute(sel).fetchone()
+    conn.close()
+    return user
+
+def md5hash(s):
+    m = md5.new()
+    m.update(s)
+    return m.hexdigest()
+
+@blueprint.route('/logout')
+def logout():
+    session.pop('user_id')
+    return redirect(url_for('.index'))
+
+@blueprint.route('/', methods=['GET','POST'])
 def index():
-    return render_template('index.html')
+    query = request.args.get('query')
+    offset = request.args.get('offset')
+    limit = request.args.get('limit')
+    rd_offset = offset
+    rd_limit = limit
+    offset = int(offset) if offset else 0
+    limit = int(limit) if limit else 25
+    user = get_user()
+    if request.method == 'POST':
+        username = request.form.get('username')
+        if username is not None:
+            password = md5hash(request.form.get('password', ''))
+            conn = engine.connect()
+            sel = select([tables.users]).where(tables.users.c.username == username)
+            user = conn.execute(sel).fetchone()
+            if user is None and username in current_app.config.get('VALID_USERS'):
+                conn.execute(tables.users.insert(), username=username,password=password)
+                user = conn.execute(sel).fetchone()
+            elif user is not None and user['password'] != password:
+                user = None
+            if user is not None:
+                session['user_id'] = user['id']
+            else:
+                flash(u'invalid username or password', 'danger')
+            conn.close()
+        sabnzbd_host = request.form.get('sabnzbd_host')
+        if sabnzbd_host:
+            sabnzbd_apikey = request.form.get('sabnzbd_apikey')
+            conn = engine.connect()
+            conn.execute(tables.users.update().values(dict(
+                sabnzbd_host=sabnzbd_host,
+                sabnzbd_apikey=sabnzbd_apikey
+            )))
+            conn.close()
+        return redirect(url_for('.index', query=query,offset=rd_offset,limit=rd_limit))
+    user = get_user()
+    releases = []
+    total_results = 0
+    if session.has_key('user_id') and query:
+        conn = engine.connect()
+        sel = select([tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query)).order_by(-tables.releases.c.date)
+        res = conn.execute(sel)
+        total_results = res.rowcount
+        res.cursor.rownumber += offset
+        for row in res.fetchmany(limit):
+            print row
+            sel = select([tables.files]).where(tables.files.c.release_id == row['id'])
+            file_count = 0
+            par2_count = 0
+            archive_count = 0
+            nfo_count = 0
+            nzb_count = 0
+            size = 0
+            _seg_where = []
+            _fg_where = []
+            for row_ in conn.execute(sel):
+                # extend query for segments 
+                _seg_where.append(tables.segments.c.file_id == row_['id'])
+                _fg_where.append(tables.file_groups.c.file_id == row_['id'])
+                file_count += 1
+                if row_['name'].endswith('.par2'):
+                    par2_count += 1
+                elif row_['name'].endswith('.rar') or re.match('^.+\.r\d\d$', row_['name']):
+                    archive_count += 1
+                elif row_['name'].endswith('.nfo'):
+                    nfo_count += 1
+                elif row_['name'].endswith('nzb'):
+                    nzb_count += 1
+            sel = select([tables.segments]).where(or_(*_seg_where))
+            # TODO: this is fucking slow
+            #for row_ in conn.execute(sel):
+            #    size += row_['size']
+            sel = select([tables.file_groups.c.group]).where(or_(*_fg_where)).distinct()
+            groups = map(lambda x: x[0], conn.execute(sel).fetchall())
+            age = humanize_date_difference(row['date'])
+            releases.append(dict(
+                id=row['id'], name=row['name'],poster=row['poster'],date=row['date'],
+                file_count=file_count, archive_count=archive_count, par2_count=par2_count,
+                nfo_count=nfo_count,nzb_count=nzb_count,size=size,groups=groups,
+                age=age
+            ))
+        res.close()
+        conn.close()
+    return render_template('index.html', user=user, query=query, results=releases, total_results=total_results, offset=offset, limit=limit)
 
-@blueprint.route('/r')
-def releases():
+@blueprint.route('/nzb/<int:release_id>.nzb')
+def get_nzb(release_id):
     return "TODO"
-
-@blueprint.route('/f')
-def files():
-    return "TODO"
-
-@blueprint.route('/g', methods=["GET", "POST"])
-def groups():
-    redis = StrictRedis(connection_pool=redis_pool)
-    if request.method == "POST":
-        group = request.form.get('group')
-        if group.startswith('a.b.'):
-            group = 'alt.binaries.' + group[4:]
-        if not redis.keys(rkey('group', group, 'last_article')):
-            try:
-                usenet = usenet.Usenet(connection_pool=usenet_pool)
-                usenet.group_info(group)
-                redis.set(rkey('group', group, 'last_article'), 0)
-            except NNTPError as e:
-                flash(e.message, 'error')
-        else:
-            flash('group %s already added' % group, 'error')            
-        return redirect(url_for('.groups'))
-    groups = map(lambda x: rkey.split(x)[1], redis.keys(rkey('group','*','last_article')))
-    return render_template('groups.html', groups=groups)
-
-@blueprint.route('/s')
-def status():
-    return "TODO"
-
-@blueprint.route('/n')
-def nzbs():
-    return "TODO"
-
-@blueprint.route('/c')
-@blueprint.route('/c/<string:group>')
-@blueprint.route('/c/<string:group>/<string:page>')
-def cache(group=None,page=None):
-    groups = os.listdir('cache')
-    if group is not None and group in groups:
-        caches = sorted(os.listdir(os.path.join('cache',group)))
-        if page is not None and page in caches:
-            f = gzip.open(os.path.join('cache',group,page), 'r')
-            articles = pickle.load(f)
-            f.close()
-            return render_template('cache.html', cached_groups=groups, 
-                                   group=group, caches=caches, page=page,
-                                   articles=articles)
-        return render_template('cache.html', cached_groups=groups, group=group, caches=caches)
-    return render_template('cache.html', cached_groups=groups)
-        
-        
-    
+    # http://wiki.sabnzbd.org/api#toc28
+    # http://miffy:9095/api?mode=addurl&apikey=d96490fab5f6e61b8fafd66e50886c26&name=http://localhost:5000/nzb/1000.nzb&nzbname=test

@@ -12,10 +12,11 @@ DATABASE_USER='mysql'
 import os
 CACHE_BASE=os.path.join('cache')
 CACHE_INBOX=os.path.join('cache','in')
+CACHE_SKIPPED=os.path.join('cache','skipped')
 CACHE_COMPLETE=os.path.join('cache','complete')
 
 CACHE_FILE_FORMAT = '{group}-{page}.{status}.gz'
-CACHE_FILE_REGEX = '^(?P<group>[a-zA-Z0-9\.]+)-(?P<page>\d+)\.(?P<status>\w+)\.gz$'
+CACHE_FILE_REGEX = '^(?P<group>[a-zA-Z0-9\.]+)-(?P<page>[\d-]+)\.(?P<status>\w+)\.gz$'
 
 CACHE_LINE_FORMAT = '{article_id}\t{subject}\t{poster}\t{date}\t{size}\n'
 CACHE_LINE_REGEX = '^(?P<article_id>[^\t]+)\t(?P<subject>[^\t]+)\t(?P<poster>[^\t]+)\t(?P<date>\d+)\t(?P<size>\d+)\n$'

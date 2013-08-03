@@ -1,4 +1,34 @@
 {% extends 'base.html' %}
 {% block content %}
+  <form class="form-inline">
+    <div class="col-lg-11">
+      <input type="text" class="form-control" name="query" placeholder="Search..."{% if query %} value="{{ query }}"{% endif %}/>
+    </div>
+    <button type="submit" class="btn btn-default">Search</button>
+  </form>
 
+  {% if results %}
+  <p></p>
+  <div class="text-right"><small>showing {{ offset+1 }} - {{ offset + (results|count) }} of {{ total_results }} results</small></div>
+  <table class="table table-hover table-condenced">
+    <thead><td>Name</td><td></td><td>Files</td><td>Size</td><td>Group(s)</td><td>Age</td></thead>
+    {% for r in results %}
+    <tr>
+      <td><small><b>{{ r.name }}</b></small></td>
+      <td style="width: 55px;">
+        <a data-toggle="tooltip" title="download nzb" href="{{ url_for('.get_nzb', release_id=r.id) }}"><i class="glyphicon glyphicon-download"></i></a>
+        {% if user.sabnzbd_apikey %}
+        <a data-toggle="tooltip" title="send to sabnzbd" href="{{ url_for('.get_nzb', release_id=r.id) }}"><i class="glyphicon glyphicon-circle-arrow-down"></i></a>
+        {% endif %}
+      </td>
+      <td>
+        <small style="color: #3da233">{{ r.file_count }} Files</small><small style="color: #e2a910">{% if r.nfo_count %} | {{ r.nfo_count }} NFO{% endif %}{% if r.archive_count %} | {{ r.archive_count }} ARCHIVE{% endif %}{% if r.par2_count %} | {{ r.par2_count }} PAR2{% endif %}{% if r.nzb_count %} | {{ r.nzb_count }} NZB{% endif %}</small>
+      </td>
+      <td><small>{{ r.size }}</small></td>
+      <td><small>{% for g in r.groups %}{{ g }}{% if not loop.last %}, {% endif %}{% endfor %}</small></td>
+      <td><small>{{ r.age }}</small></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 {% endblock %}
