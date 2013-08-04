@@ -49,10 +49,10 @@ def time_taken_to_str(since):
     return 'FUCK'
 
 def date_difference(since, until=datetime.now(), offset=None):
-    if isinstance(since, (int, long, float)):
+    if isinstance(since, (int, float)):
         since = datetime.fromtimestamp(since)
     if until:
-        if isinstance(until, (int, long, float)):
+        if isinstance(until, (int, float)):
             until = datetime.fromtimestamp(until)
         dt = until - since
         offset = dt.seconds + (dt.days * 60*60*24)
@@ -140,8 +140,8 @@ class Range(object):
         return ranges
     def _ranges(self, items):
         ranges = []
-        for k, g in groupby(enumerate(items), lambda (i,x):i-x):
-            group = map(itemgetter(1), g)
+        for k, g in groupby(enumerate(items), lambda i_x:i_x[0]-i_x[1]):
+            group = list(map(itemgetter(1), g))
             ranges.append((group[0], group[-1]))
         return ranges
     def add(self, *args):

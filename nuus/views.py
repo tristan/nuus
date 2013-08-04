@@ -56,7 +56,7 @@ def index():
             if user is not None:
                 session['user_id'] = user['id']
             else:
-                flash(u'invalid username or password', 'danger')
+                flash('invalid username or password', 'danger')
             conn.close()
         sabnzbd_host = request.form.get('sabnzbd_host')
         if sabnzbd_host:
@@ -71,7 +71,7 @@ def index():
     user = get_user()
     releases = []
     total_results = 0
-    if session.has_key('user_id') and query:
+    if 'user_id' in session and query:
         conn = engine.connect()
         sel = select([tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query)).order_by(-tables.releases.c.date)
         res = conn.execute(sel)
@@ -110,7 +110,7 @@ def index():
                 #release['size'] = "UNKNOWN"
                 release['size'] = size
                 sel = select([tables.file_groups.c.group]).where(or_(*_fg_where)).distinct()
-                groups = map(lambda x: x[0], conn.execute(sel).fetchall())
+                groups = [x[0] for x in conn.execute(sel).fetchall()]
                 release['groups'] = groups
                 release['file_count'] = file_count
                 release['archive_file_count'] = archive_count
@@ -121,7 +121,7 @@ def index():
                     release['nzb'] = nzb_file
             else:
                 sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
-                groups = map(lambda x: x[0], conn.execute(sel).fetchall())
+                groups = [x[0] for x in conn.execute(sel).fetchall()]
                 release['groups'] = groups
             age = humanize_date_difference(release['date'])
             release['age'] = age
@@ -169,7 +169,7 @@ def get_nzb(release_id):
             segments_parts.append(nzb_segment.format(size=s['size'],number=s['number'],article_id=s['article_id']))
         segments_part = '\n'.join(segments_parts)
         sel = select([tables.file_groups.c.group]).where(tables.file_groups.c.file_id == f['id']).distinct()
-        groups_part = '\n'.join(map(lambda x: nzb_group.format(group=x[0]), conn.execute(sel).fetchall()))
+        groups_part = '\n'.join([nzb_group.format(group=x[0]) for x in conn.execute(sel).fetchall()])
         files_part += nzb_file.format(poster=release['poster'], date=release['date'], subject=f['name'],
                                       groups=groups_part,segments=segments_part)
     return Response(nzb.format(release_name=release['name'],files=files_part), mimetype='application/x-nzb')

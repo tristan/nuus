@@ -1,4 +1,4 @@
-import cPickle as pickle
+import pickle as pickle
 from itertools import chain
 from functools import wraps
 import nntplib
@@ -110,10 +110,10 @@ def retry(fn, max_retries=16):
             try:
                 return fn(*args, **kwargs)
             except EOFError as e:
-                print 'got EOFError, retrying...'
+                print('got EOFError, retrying...')
                 retries+=1
                 time.sleep(retries)
-        print 'max number of retries reached.'
+        print('max number of retries reached.')
         raise e
     return wrapper
 

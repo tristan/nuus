@@ -44,7 +44,7 @@ def bulk_import():
                 mysqlimport(group_in_files, temp_group_map_fn)
                 group_in_files = []
         else:
-            print 'unhandled file:', fn
+            print('unhandled file:', fn)
             continue
     if len(article_in_files):
         mysqlimport(article_in_files, temp_articles_fn)

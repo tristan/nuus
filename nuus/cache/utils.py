@@ -1,4 +1,4 @@
-import cPickle as pickle
+import pickle as pickle
 import gzip
 from nuus.database import SimpleDatabase
 from nuus.utils import parse_date
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     if sort:
         for db_filename in os.listdir('cache'):
             if re.match('^[a-z\.]+-article.db\.\d+$', db_filename):
-                print db_filename
+                print(db_filename)
                 sort_database(os.path.join('cache',db_filename))
 
     if dump:
@@ -66,21 +66,21 @@ if __name__ == '__main__':
         max_lens = [0,0,0]
         for group in os.listdir(src_dir):
             for page in os.listdir(os.path.join(src_dir,group)):
-                print group, page, max_lens
+                print(group, page, max_lens)
                 page_file = os.path.join(src_dir,group,page)
                 with gzip.open(page_file, 'r') as f:
                     articles = pickle.load(f)
                 gmlines = []
                 alines = []
                 for number, subject, poster, sdate, id, _, size, _ in articles:
-                    max_lens = map(max,zip(max_lens,[len(subject),len(poster),len(id)]))
+                    max_lens = list(map(max,list(zip(max_lens,[len(subject),len(poster),len(id)]))))
                     try:
                         date = parse_date(sdate)
                     except:
                         if sdate == "":
                             date = 0
                         else:
-                            print "FAILED TO PARSE DATE:", sdate
+                            print("FAILED TO PARSE DATE:", sdate)
                             raise
                     alines.append('%s\n' % '\t'.join([id[1:-1], subject, poster, str(date), size]))
                     gmlines.append('%s\t%s\n' % (group, id[1:-1]))
@@ -89,12 +89,12 @@ if __name__ == '__main__':
                 with gzip.open(os.path.join('cache','%s-bulk-group-mappings.%s.gz' % (group, page)), 'w') as f:
                     f.writelines(gmlines)
                 shutil.move(page_file, os.path.join(done_dir, '%s.%s.gz' % (group, page)))
-        print max_lens
+        print(max_lens)
 
     if check:
         src_dir = os.path.join('cache')
         for page in os.listdir(src_dir):
-            print page
+            print(page)
             if re.match('^alt\.binaries\.[^-]+-bulk-[\w-]+\.\d+\.gz$', page):
                 page_file = os.path.join(src_dir,page)
                 with gzip.open(page_file, 'r') as f:
@@ -102,17 +102,17 @@ if __name__ == '__main__':
                         try:
                             line.decode('utf-8')
                         except:
-                            print line
+                            print(line)
                             raise
 
     if clean_utf:
         src_dir = os.path.join('cache')
         for page in os.listdir(src_dir):
-            print page,
+            print(page, end=' ')
             if re.match('^alt\.binaries\.[^-]+-bulk-[\w-]+\.\d+\.gz$', page):
-                print '... processing'
+                print('... processing')
                 page_file = os.path.join(src_dir, page)
                 with gzip.open(page_file, 'r') as f:
                     lines = f.readlines()
                 with gzip.open(page_file, 'w') as f:
-                    f.writelines(map(lambda x: x.decode('latin-1').encode('utf-8'), lines))
+                    f.writelines([x.decode('latin-1').encode('utf-8') for x in lines])

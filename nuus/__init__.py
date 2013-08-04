@@ -18,7 +18,7 @@ except:
 # usenet connection pool
 usenet_pool = usenet.ConnectionPool(
     **{x[7:].lower(): app.config[x] for x in
-       filter(lambda x: x.startswith('USENET_'), app.config.keys())})
+       [x for x in list(app.config.keys()) if x.startswith('USENET_')]})
 
 def init_app():
     from .views import blueprint as main_blueprint

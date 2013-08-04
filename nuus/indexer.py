@@ -10,7 +10,7 @@ Indexing:
 
 """
 
-import cPickle as pickle
+import pickle as pickle
 from collections import deque
 import datetime
 import gzip
@@ -39,14 +39,14 @@ def enc(s):
     return s.decode('latin-1').encode('utf-8')
 
 def download_headers(id, group, start, end):
-    print '+ <%s>' % id
+    print('+ <%s>' % id)
     fn = os.path.join(CACHE_INBOX, CACHE_FILE_FORMAT.format(
         group=group,page='%s-%s' % (id, start),status='new'))
     if os.path.exists(fn):
-        print '< <%s>' % id
+        print('< <%s>' % id)
         return (id, 0)
     u = usenet.Usenet(connection_pool=nuus.usenet_pool)
-    print '> <%s>' % id
+    print('> <%s>' % id)
     articles = u.get_articles(group, start, end)
     if articles:
         with gzip.open(fn, 'w') as f:
@@ -57,7 +57,7 @@ def download_headers(id, group, start, end):
                     poster=enc(poster),
                     date=parse_date(sdate),
                     size=size))
-    print '< <%s>' % id
+    print('< <%s>' % id)
     return (id, len(articles))
 
 def parse_header(file_name):
@@ -78,12 +78,12 @@ class Indexer(object):
         with conn.begin() as trans:
             for g in groups:
                 # get group info
-                print 'updating group:', g['group'],
+                print('updating group:', g['group'], end=' ')
                 gi = self._usenet.group_info(g['group'])
                 if g['last_post_checked']+1 < gi.last:
-                    print g['last_post_checked'], '->', gi.last
+                    print(g['last_post_checked'], '->', gi.last)
                 else:
-                    print ''
+                    print('')
                 st = max(gi.first, g['last_post_checked']+1)
                 while st <= gi.last:
                     end = min(gi.last, st+self._articles_per_worker)
@@ -104,13 +104,13 @@ class Indexer(object):
 
         # start workers
         futures = []
-        print 'Starting header downloads with %s tasks' % len(tasks)
+        print('Starting header downloads with %s tasks' % len(tasks))
         start_time = time.time()
         with ProcessPoolExecutor(max_workers=self._max_workers) as executor:
             # queue up tasks
             for task in tasks:
                 futures.append(executor.submit(download_headers, **task))
-            print 'all tasks queued...'
+            print('all tasks queued...')
             # get results
             new_articles = 0
             tasks_complete = 0
@@ -122,10 +122,10 @@ class Indexer(object):
                 new_articles += arts
                 tasks_complete += 1
                 if tasks_complete % report_status_on == 0:
-                    print '\nCompleted: %s, Remaining: %s, ETR: %s' % (
+                    print('\nCompleted: %s, Remaining: %s, ETR: %s' % (
                         tasks_complete, len(tasks) - tasks_complete, 
-                        time_remaining(start_time, tasks_complete, len(tasks) - tasks_complete))
-                print '- <%s>' % tid
+                        time_remaining(start_time, tasks_complete, len(tasks) - tasks_complete)))
+                print('- <%s>' % tid)
 
 if __name__ == '__main__':
     indexer = Indexer()
@@ -133,4 +133,4 @@ if __name__ == '__main__':
         sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
         indexer.run()
     except KeyboardInterrupt:
-        print 'forcing shutdown...'
+        print('forcing shutdown...')

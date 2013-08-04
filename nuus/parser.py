@@ -13,6 +13,7 @@ from sqlalchemy.sql import select, and_, or_, not_
 #from sqlalchemy.sql.expression import collate
 import sys
 import time
+from functools import reduce
 
 CACHE_BASE = nuus.app.config.get('CACHE_BASE')
 CACHE_INBOX = nuus.app.config.get('CACHE_INBOX')
@@ -30,7 +31,7 @@ class Parser(object):
         self._patterns = patterns
 
     def run(self):
-        print CACHE_FILE_REGEX.pattern
+        print(CACHE_FILE_REGEX.pattern)
         for filename in os.listdir(CACHE_INBOX):
             self.parse_file(filename)
             shutil.move(os.path.abspath(os.path.join(CACHE_INBOX, filename)),
@@ -41,7 +42,7 @@ class Parser(object):
         if m_filename and m_filename.group('status') == 'new':
             group = m_filename.group('group')
             page = m_filename.group('page')
-            print 'parsing group: %s, page: %s' % (group, page),
+            print('parsing group: %s, page: %s' % (group, page), end=' ')
             start_time = time.time()
             skipped_count = 0
             matched_count = 0
@@ -64,7 +65,7 @@ class Parser(object):
                         skipped_count += 1
             if matched_count > 0:
                 self.process_matches(matches)
-            print 'matched: %s, skipped: %s, time: %s' % (matched_count, skipped_count, utils.time_taken_to_str(time.time() - start_time))
+            print('matched: %s, skipped: %s, time: %s' % (matched_count, skipped_count, utils.time_taken_to_str(time.time() - start_time)))
 
     def parse_line(self, group, line):
         m = CACHE_LINE_REGEX.match(line)
@@ -74,7 +75,7 @@ class Parser(object):
         for pat in self._patterns:
             n = pat.match(subject)
             if n:
-                return dict([('group',group)] + m.groupdict().items() + n.groupdict().items())
+                return dict([('group',group)] + list(m.groupdict().items()) + list(n.groupdict().items()))
         return None
 
     def process_matches(self, matches):
@@ -82,7 +83,7 @@ class Parser(object):
         _files = dict()
         _fgs = set()
         _segs = dict()
-        mkkey = lambda t: tuple(map(lambda x: str(x).lower(), t))
+        mkkey = lambda t: tuple([str(x).lower() for x in t])
         for m in matches:
             release, f, fg, s = self.process_match(**m)
             _releases[mkkey((release['name'],release['poster']))] = release
@@ -100,7 +101,7 @@ class Parser(object):
         _releases = dict()
         # get all existing releases
         s1 = reduce(lambda a,x: a + (and_(releases.c.name == x[0], releases.c.poster == x[1]),), 
-                    old_releases.keys(), tuple())
+                    list(old_releases.keys()), tuple())
         s = select([releases]).where(or_(*s1))
         results = conn.execute(s).fetchall()
         for row in results:
@@ -109,11 +110,11 @@ class Parser(object):
             try:
                 del new_releases[key]
             except:
-                print '\nDUPLICATE FOUND: %s' % row
+                print('\nDUPLICATE FOUND: %s' % row)
         if new_releases:
             # create new releases
-            new_releases = new_releases.values()
-            print 'new releases:', len(new_releases),
+            new_releases = list(new_releases.values())
+            print('new releases:', len(new_releases), end=' ')
             rid = conn.execute(releases.insert(), new_releases).lastrowid
             # assign ids (i abuse .lastrowid so i don't have to query the db again)
             for r in new_releases:
@@ -125,12 +126,12 @@ class Parser(object):
 
         # fill in release_id for files
         s = []
-        for key in _files.keys():
+        for key in list(_files.keys()):
             f = _files[key]
             f['release_id'] = _releases[key[:2]]['id']
             s.append(and_(files.c.release_id == f['release_id'], files.c.name == f['name']))
         # re-index releases
-        _releases = {r['id']: r for r in _releases.values()}
+        _releases = {r['id']: r for r in list(_releases.values())}
 
         new_files = copy.copy(_files)
         old_files = copy.copy(_files)
@@ -143,8 +144,8 @@ class Parser(object):
             _files[key] = dict(row)
             del new_files[key]
         if new_files:
-            new_files = new_files.values()
-            print 'new files:', len(new_files),
+            new_files = list(new_files.values())
+            print('new files:', len(new_files), end=' ')
             rid = conn.execute(files.insert(), new_files).lastrowid
             for f in new_files:
                 key = mkkey((_releases[f['release_id']]['name'], _releases[f['release_id']]['poster'], f['name']))
@@ -175,11 +176,11 @@ class Parser(object):
 
         # fill in file_id for segments
         s = []
-        for key in _segs.keys():
+        for key in list(_segs.keys()):
             _segs[key]['file_id'] = _files[key[:3]]['id']
             s.append(segments.c.article_id == _segs[key]['article_id'])
         # re-index segments
-        _segs = {s['article_id']: s for s in _segs.values()}
+        _segs = {s['article_id']: s for s in list(_segs.values())}
         # get existing segments
         s = select([segments]).where(or_(*s))
         for row in conn.execute(s):
@@ -188,8 +189,8 @@ class Parser(object):
         # transactional insert for fgs and segs
         with conn.begin() as trans:
             if _segs:
-                print 'new segments:', len(_segs),
-                conn.execute(segments.insert(), _segs.values())
+                print('new segments:', len(_segs), end=' ')
+                conn.execute(segments.insert(), list(_segs.values()))
             if new_fgs:
                 conn.execute(file_groups.insert(), [dict(file_id=x[0],group=x[1]) for x in new_fgs])
             
@@ -269,9 +270,9 @@ class Parser(object):
             rval.close()
             with conn.begin():
                 # add nfo or nzb to the release if required
-                if (not release.has_key('nfo')) and file_name.endswith('.nfo'):
+                if ('nfo' not in release) and file_name.endswith('.nfo'):
                     conn.execute(releases.update().where(releases.c.id == release['id']).values(nfo=f['id'])).close()
-                elif (not release.has_key('nzb')) and file_name.endswith('.nzb'):
+                elif ('nzb' not in release) and file_name.endswith('.nzb'):
                     conn.execute(releases.update().where(releases.c.id == release['id']).values(nzb=f['id'])).close()
                 # add group to file (shouldn't be a duplicate if the file has just been created)
                 conn.execute(file_groups.insert(), 
@@ -306,7 +307,7 @@ class Parser(object):
 if __name__ == '__main__':
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
     f = open('patterns.txt')
-    patterns = [re.compile(p, re.I) for p in filter(lambda x: not (x == '' or x.startswith('#')), [x.strip() for x in f.readlines()])]
+    patterns = [re.compile(p, re.I) for p in [x for x in [x.strip() for x in f.readlines()] if not (x == '' or x.startswith('#'))]]
     f.close()
     parser = Parser(patterns)
     parser.run()
