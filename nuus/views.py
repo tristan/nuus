@@ -1,4 +1,4 @@
-from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash, current_app
+from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash, current_app, Response
 import md5
 from nuus.utils import rkey, humanize_date_difference
 from nuus.database import engine, tables
@@ -78,48 +78,100 @@ def index():
         total_results = res.rowcount
         res.cursor.rownumber += offset
         for row in res.fetchmany(limit):
-            print row
-            sel = select([tables.files]).where(tables.files.c.release_id == row['id'])
-            file_count = 0
-            par2_count = 0
-            archive_count = 0
-            nfo_count = 0
-            nzb_count = 0
-            size = 0
-            _seg_where = []
-            _fg_where = []
-            for row_ in conn.execute(sel):
-                # extend query for segments 
-                _seg_where.append(tables.segments.c.file_id == row_['id'])
-                _fg_where.append(tables.file_groups.c.file_id == row_['id'])
-                file_count += 1
-                if row_['name'].endswith('.par2'):
-                    par2_count += 1
-                elif row_['name'].endswith('.rar') or re.match('^.+\.r\d\d$', row_['name']):
-                    archive_count += 1
-                elif row_['name'].endswith('.nfo'):
-                    nfo_count += 1
-                elif row_['name'].endswith('nzb'):
-                    nzb_count += 1
-            sel = select([tables.segments]).where(or_(*_seg_where))
-            # TODO: this is fucking slow
-            #for row_ in conn.execute(sel):
-            #    size += row_['size']
-            sel = select([tables.file_groups.c.group]).where(or_(*_fg_where)).distinct()
-            groups = map(lambda x: x[0], conn.execute(sel).fetchall())
-            age = humanize_date_difference(row['date'])
-            releases.append(dict(
-                id=row['id'], name=row['name'],poster=row['poster'],date=row['date'],
-                file_count=file_count, archive_count=archive_count, par2_count=par2_count,
-                nfo_count=nfo_count,nzb_count=nzb_count,size=size,groups=groups,
-                age=age
-            ))
+            release = dict(row)
+            if release['file_count'] == 0: # hasn't been sized yet, use old dets to fill
+                sel = select([tables.files]).where(tables.files.c.release_id == row['id'])
+                file_count = 0
+                par2_count = 0
+                archive_count = 0
+                nfo_file = None
+                nzb_file = None
+                size = 0
+                _seg_where = []
+                _fg_where = []
+                for row_ in conn.execute(sel):
+                    # extend query for segments 
+                    _seg_where.append(tables.segments.c.file_id == row_['id'])
+                    _fg_where.append(tables.file_groups.c.file_id == row_['id'])
+                    file_count += 1
+                    fn = row_['name'].lower()
+                    if fn.endswith('.par2'):
+                        par2_count += 1
+                    elif fn.endswith('.rar') or re.match('^.+\.r\d\d$', fn) or re.match('^.+\.\d\d\d$', fn):
+                        archive_count += 1
+                    elif fn.endswith('.nfo'):
+                        nfo_file = row_['id']
+                    elif fn.endswith('nzb'):
+                        nzb_file = row_['id']
+                # TODO: this is super quick after indexing
+                sel = select([tables.segments]).where(or_(*_seg_where))
+                for row_ in conn.execute(sel):
+                    size += row_['size']
+                #release['size'] = "UNKNOWN"
+                release['size'] = size
+                sel = select([tables.file_groups.c.group]).where(or_(*_fg_where)).distinct()
+                groups = map(lambda x: x[0], conn.execute(sel).fetchall())
+                release['groups'] = groups
+                release['file_count'] = file_count
+                release['archive_file_count'] = archive_count
+                release['par2_file_count'] = par2_count
+                if nfo_file:
+                    release['nfo'] = nfo_file
+                if nzb_file:
+                    release['nzb'] = nzb_file
+            else:
+                sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
+                groups = map(lambda x: x[0], conn.execute(sel).fetchall())
+                release['groups'] = groups
+            age = humanize_date_difference(release['date'])
+            release['age'] = age
+            releases.append(release)
         res.close()
         conn.close()
     return render_template('index.html', user=user, query=query, results=releases, total_results=total_results, offset=offset, limit=limit)
 
+
+nzb = """<?xml version="1.0" encoding="iso-8859-1" ?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+<head>
+<meta type="title">{release_name}</meta>
+</head>
+{files}
+</nzb>
+"""
+
+nzb_file = """<file poster="{poster}" date="{date}" subject="{subject}">
+<groups>
+{groups}
+</groups>
+<segments>
+{segments}
+</segments>
+</file>
+"""
+
+nzb_group = """<group>{group}</group>"""
+
+nzb_segment = """<segment bytes="{size}" number="{number}">{article_id}</segment>"""
+
 @blueprint.route('/nzb/<int:release_id>.nzb')
 def get_nzb(release_id):
-    return "TODO"
+    conn = engine.connect()
+    sel = select([tables.releases]).where(tables.releases.c.id == release_id)
+    release = conn.execute(sel).fetchone()
+    files_part = ""
+    sel = select([tables.files]).where(tables.files.c.release_id == release_id)
+    for f in conn.execute(sel):
+        sel = select([tables.segments]).where(tables.segments.c.file_id == f['id']).order_by(tables.segments.c.number)
+        segments_parts = []
+        for s in conn.execute(sel):
+            segments_parts.append(nzb_segment.format(size=s['size'],number=s['number'],article_id=s['article_id']))
+        segments_part = '\n'.join(segments_parts)
+        sel = select([tables.file_groups.c.group]).where(tables.file_groups.c.file_id == f['id']).distinct()
+        groups_part = '\n'.join(map(lambda x: nzb_group.format(group=x[0]), conn.execute(sel).fetchall()))
+        files_part += nzb_file.format(poster=release['poster'], date=release['date'], subject=f['name'],
+                                      groups=groups_part,segments=segments_part)
+    return Response(nzb.format(release_name=release['name'],files=files_part), mimetype='application/x-nzb')
     # http://wiki.sabnzbd.org/api#toc28
     # http://miffy:9095/api?mode=addurl&apikey=d96490fab5f6e61b8fafd66e50886c26&name=http://localhost:5000/nzb/1000.nzb&nzbname=test

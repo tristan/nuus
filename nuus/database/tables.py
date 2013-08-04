@@ -1,4 +1,5 @@
-from sqlalchemy import Table, Column, Integer, String, MetaData, UniqueConstraint
+from sqlalchemy import Table, Column, Integer, String, MetaData, UniqueConstraint, Index
+from sqlalchemy.dialects.mysql import BIGINT
 from nuus.database import engine
 
 metadata = MetaData()
@@ -14,6 +15,10 @@ releases = Table(
     Column('parts', Integer),
     Column('nfo', Integer), # points to a file that is the nfo
     Column('nzb', Integer), # points to a file that is a nzb
+    Column('file_count', Integer, default=0),
+    Column('archive_file_count', Integer, default=0),
+    Column('par2_file_count', Integer, default=0),
+    Column('size', BIGINT, default=0),
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )
@@ -28,12 +33,24 @@ files = Table(
     mysql_charset='utf8'
 )
 
+idx_release_files = Index('release_files', files.c.release_id)
+
 file_groups = Table(
     'file_groups', metadata,
     Column('id', Integer, primary_key=True),
     Column('file_id', Integer, nullable=False),
     Column('group', String(64), nullable=False),
     UniqueConstraint('file_id', 'group', name='uix_1'),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
+release_groups = Table(
+    'release_groups', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('release_id', Integer, nullable=False),
+    Column('group', String(64), nullable=False),
+    UniqueConstraint('release_id', 'group', name='uix_2'),
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )
@@ -48,6 +65,9 @@ segments = Table(
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )
+
+idx_file_segments = Index('file_segments', segments.c.file_id)
+idx_segment_article_ids = Index('segment_article_ids', segments.c.article_id)
 
 #### INDEXER TABLES
 

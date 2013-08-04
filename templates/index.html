@@ -22,7 +22,7 @@
         {% endif %}
       </td>
       <td>
-        <small style="color: #3da233">{{ r.file_count }} Files</small><small style="color: #e2a910">{% if r.nfo_count %} | {{ r.nfo_count }} NFO{% endif %}{% if r.archive_count %} | {{ r.archive_count }} ARCHIVE{% endif %}{% if r.par2_count %} | {{ r.par2_count }} PAR2{% endif %}{% if r.nzb_count %} | {{ r.nzb_count }} NZB{% endif %}</small>
+        <small style="color: #3da233">{{ r.file_count }} Files</small><small style="color: #e2a910">{% if r.nfo %} | 1 NFO{% endif %}{% if r.archive_file_count %} | {{ r.archive_file_count }} ARCHIVE{% endif %}{% if r.par2_file_count %} | {{ r.par2_file_count }} PAR2{% endif %}{% if r.nzb %} | 1 NZB{% endif %}</small>
       </td>
       <td><small>{{ r.size }}</small></td>
       <td><small>{% for g in r.groups %}{{ g }}{% if not loop.last %}, {% endif %}{% endfor %}</small></td>

@@ -56,7 +56,7 @@ def date_difference(since, until=datetime.now(), offset=None):
             until = datetime.fromtimestamp(until)
         dt = until - since
         offset = dt.seconds + (dt.days * 60*60*24)
-    if offset:
+    if offset or offset == 0:
         delta_s = offset % 60
         offset /= 60
         delta_m = offset % 60
@@ -86,7 +86,7 @@ def time_remaining(start_time, things_completed, things_remainings, now=time.tim
     time_per_thing = time_taken / things_completed
     etr = now + time_per_thing * things_remainings
     
-    delta_d, delta_h, delta_m, delta_s = date_difference(now, etr)
+    delta_d, delta_h, delta_m, delta_s = date_difference(now, until=etr)
 
     rval = ''
     if delta_d > 0:

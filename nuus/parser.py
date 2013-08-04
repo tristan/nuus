@@ -16,6 +16,7 @@ import time
 
 CACHE_BASE = nuus.app.config.get('CACHE_BASE')
 CACHE_INBOX = nuus.app.config.get('CACHE_INBOX')
+CACHE_SKIPPED = nuus.app.config.get('CACHE_SKIPPED')
 CACHE_COMPLETE = nuus.app.config.get('CACHE_COMPLETE')
 
 CACHE_FILE_FORMAT = nuus.app.config.get('CACHE_FILE_FORMAT')
@@ -34,7 +35,6 @@ class Parser(object):
             self.parse_file(filename)
             shutil.move(os.path.abspath(os.path.join(CACHE_INBOX, filename)),
                         os.path.abspath(os.path.join(CACHE_COMPLETE, filename)))
-
 
     def parse_file(self, filename):
         m_filename = CACHE_FILE_REGEX.match(filename)
@@ -105,7 +105,7 @@ class Parser(object):
         results = conn.execute(s).fetchall()
         for row in results:
             key = mkkey((row['name'], row['poster']))
-            _releases[key] = row
+            _releases[key] = dict(row)
             try:
                 del new_releases[key]
             except:
@@ -140,7 +140,7 @@ class Parser(object):
         results = conn.execute(s).fetchall()
         for row in results:
             key = mkkey((_releases[row['release_id']]['name'], _releases[row['release_id']]['poster'], row['name']))
-            _files[key] = row
+            _files[key] = dict(row)
             del new_files[key]
         if new_files:
             new_files = new_files.values()
