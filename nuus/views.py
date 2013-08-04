@@ -1,6 +1,6 @@
 from flask import Blueprint, url_for, render_template, request, redirect, session, g, abort, flash, current_app, Response
-import md5
-from nuus.utils import rkey, humanize_date_difference
+from hashlib import md5
+from nuus.utils import humanize_date_difference
 from nuus.database import engine, tables
 import os
 import re
@@ -22,8 +22,8 @@ def get_user(user_id=None):
     return user
 
 def md5hash(s):
-    m = md5.new()
-    m.update(s)
+    m = md5()
+    m.update(s.encode())
     return m.hexdigest()
 
 @blueprint.route('/logout')
@@ -73,11 +73,10 @@ def index():
     total_results = 0
     if 'user_id' in session and query:
         conn = engine.connect()
-        sel = select([tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query)).order_by(-tables.releases.c.date)
+        total_results = conn.execute(select([func.count(),tables.releases])).scalar()
+        sel = select([tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query)).order_by(-tables.releases.c.date).limit(limit).offset(offset)
         res = conn.execute(sel)
-        total_results = res.rowcount
-        res.cursor.rownumber += offset
-        for row in res.fetchmany(limit):
+        for row in res.fetchall():
             release = dict(row)
             if release['file_count'] == 0: # hasn't been sized yet, use old dets to fill
                 sel = select([tables.files]).where(tables.files.c.release_id == row['id'])

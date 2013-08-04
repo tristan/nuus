@@ -5,15 +5,6 @@ from functools import wraps
 from operator import itemgetter
 import re
 import time
-
-class rkey(object):
-    """This is a nasty little hack that i'm only allowing because i'm jetlagged!"""
-    def __new__(cls, *args):
-        return ':'.join(map(str, args))
-    
-    @classmethod
-    def split(cls, key):
-        return key.split(':')
         
 def dt2ut(dt):
     """datetime to unixtime"""
@@ -44,33 +35,21 @@ def parse_date(datestr):
             return fn(m.groups() or (datestr,))
     raise ValueError('Unable to handle date format: "%s"' % datestr)        
 
-def time_taken_to_str(since):
-    delta_d, delta_h, delta_m, delta_s = date_difference(since)
-    return 'FUCK'
-
-def date_difference(since, until=datetime.now(), offset=None):
-    if isinstance(since, (int, float)):
-        since = datetime.fromtimestamp(since)
-    if until:
-        if isinstance(until, (int, float)):
-            until = datetime.fromtimestamp(until)
-        dt = until - since
-        offset = dt.seconds + (dt.days * 60*60*24)
-    if offset or offset == 0:
-        delta_s = offset % 60
-        offset /= 60
-        delta_m = offset % 60
-        offset /= 60
-        delta_h = offset % 24
-        offset /= 24
-        delta_d = offset
-    else:
-        raise ValueError("Must supply until or offset (from since)")
- 
+def date_deltas(offset):
+    delta_s = offset % 60
+    offset /= 60
+    delta_m = offset % 60
+    offset /= 60
+    delta_h = offset % 24
+    offset /= 24
+    delta_d = offset
     return (delta_d, delta_h, delta_m, delta_s)
 
-def humanize_date_difference(since, until=datetime.now(), offset=None):
-    delta_d, delta_h, delta_m, delta_s = date_difference(since, until, offset)
+def humanize_date_difference(since, until=None, offset=None):
+    if until is None:
+        until = time.time()
+    until -= since
+    delta_d, delta_h, delta_m, delta_s = date_deltas(until)
 
     if delta_d > 0:
         return "%d days ago" % delta_d
@@ -81,12 +60,13 @@ def humanize_date_difference(since, until=datetime.now(), offset=None):
     else:
         return "%ds ago" % delta_s
 
-def time_remaining(start_time, things_completed, things_remainings, now=time.time()):
+def time_remaining(start_time, things_completed, things_remainings, now=None):
+    if now is None:
+        now = time.time()
     time_taken = now - start_time
     time_per_thing = time_taken / things_completed
-    etr = now + time_per_thing * things_remainings
-    
-    delta_d, delta_h, delta_m, delta_s = date_difference(now, until=etr)
+    offset = time_per_thing * things_remainings
+    delta_d, delta_h, delta_m, delta_s = date_deltas(offset)
 
     rval = ''
     if delta_d > 0:
@@ -114,49 +94,3 @@ def swallow(exception):
         return wrapper
     return decorator
 
-class Range(object):
-    def __contains__(self, x):
-        for r in self.ranges:
-            if r[0] <= x and r[1] >= x:
-                return True
-        return False
-    def __init__(self, *args):
-        self.ranges = self._ranges(args)
-    def __repr__(self):
-        return self.ranges.__repr__()
-    def _combine_ranges(self, range1, range2):
-        ranges = sorted(range1 + range2)
-        i = 1
-        while i < len(ranges):
-            if ranges[i][0] <= ranges[i-1][1]:
-                if ranges[i][1] > ranges[i-1][1]:
-                    ranges[i-1] = (ranges[i-1][0], ranges[i][1])
-                del ranges[i]
-            elif ranges[i][0] == ranges[i-1][1]+1:
-                ranges[i-1] = (ranges[i-1][0], ranges[i][1])
-                del ranges[i]
-            else:
-                i+= 1
-        return ranges
-    def _ranges(self, items):
-        ranges = []
-        for k, g in groupby(enumerate(items), lambda i_x:i_x[0]-i_x[1]):
-            group = list(map(itemgetter(1), g))
-            ranges.append((group[0], group[-1]))
-        return ranges
-    def add(self, *args):
-        self.ranges = self._combine_ranges(self.ranges, self._ranges(args))
-    def missing(self, start=None, end=None):
-        """Returns the ranges missing between `start` and `end`"""
-        ex = []
-        if start is not None:
-            ex.append((start-1,start-1))
-        if end is not None:
-            ex.append((end+1,end+1))
-        rgs = self._combine_ranges(self.ranges, ex)
-        inv = []
-        i = 1
-        while i < len(rgs):
-            inv.append((rgs[i-1][1]+1, rgs[i][0]-1))
-            i+=1
-        return self._combine_ranges(inv, [])
