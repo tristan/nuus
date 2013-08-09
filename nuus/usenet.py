@@ -133,32 +133,57 @@ class Usenet(object):
     @retry
     def group_info(self, group):
         conn = self.connection_pool.get_connection()
-        conn.connect()
-        res = conn.nntp.group(group)
-        conn.disconnect()
-        self.connection_pool.release(conn)
-        return GroupInfo(res)
+        try:
+            conn.connect()
+            res = conn.nntp.group(group)
+            conn.disconnect()
+            self.connection_pool.release(conn)
+            return GroupInfo(res)
+        except: # make sure connection is released before throwing exception
+            conn.disconnect()
+            self.connection_pool.release(conn)
+            raise
 
     @retry
     def get_articles(self, group, start, end, include_empty_results=False):
         articles = []
-        if start <= end:
-            # we didn't get everything from cache
+        if start <= end: # sanity check
             conn = self.connection_pool.get_connection()
+            try:
+                conn.connect()
+                resp, count, first, last, name = conn.nntp.group(group)
+                start = min(int(last), max(start, int(first)))
+                end = max(int(first), min(end, int(last)))
+                resp, items = conn.nntp.over((str(start), str(end)))
+                # check that items are sequential and add empty articles when they're not
+                if include_empty_results:
+                    idx = 0
+                    while start + idx <= end:
+                        #print start, end, idx, len(items), items[idx][0]
+                        if idx >= len(items) or int(items[idx][0]) != (start + idx):
+                            items.insert(idx, (str(start + idx), None, None, None, None, None, None, None))
+                        idx += 1
+                articles.extend(items)
+                conn.disconnect()
+                self.connection_pool.release(conn)
+            except: # make sure connection is released before throwing exception
+                conn.disconnect()
+                self.connection_pool.release(conn)
+                raise
+        return articles
+
+    @retry
+    def get_article(self, message_id):
+        conn = self.connection_pool.get_connection()
+        try:
             conn.connect()
-            resp, count, first, last, name = conn.nntp.group(group)
-            start = min(int(last), max(start, int(first)))
-            end = max(int(first), min(end, int(last)))
-            resp, items = conn.nntp.xover(str(start), str(end))
-            # check that items are sequential and add empty articles when they're not
-            if include_empty_results:
-                idx = 0
-                while start + idx <= end:
-                    #print start, end, idx, len(items), items[idx][0]
-                    if idx >= len(items) or int(items[idx][0]) != (start + idx):
-                        items.insert(idx, (str(start + idx), None, None, None, None, None, None, None))
-                    idx += 1
-            articles.extend(items)
+            resp, info = conn.nntp.body(message_id)
             conn.disconnect()
             self.connection_pool.release(conn)
-        return articles
+            for b in info.lines:
+                print(b.decode('latin-1'))
+            return info.lines
+        except: # make sure connection is released before throwing exception
+            conn.disconnect()
+            self.connection_pool.release(conn)
+            raise

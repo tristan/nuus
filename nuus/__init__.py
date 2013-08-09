@@ -22,4 +22,6 @@ usenet_pool = usenet.ConnectionPool(
 
 def init_app():
     from .views import blueprint as main_blueprint
+    from .debug import blueprint as debug_blueprint
     app.register_blueprint(main_blueprint)
+    app.register_blueprint(debug_blueprint)

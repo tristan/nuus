@@ -23,6 +23,9 @@ date_formats = [
     # XXX, ?0, XXX 0000 00:00:00 XXX
     (re.compile('^[\w]{3},\s+\d{1,2}\s+[\w]{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+\w{3}$'),
      lambda x: dt2ut(datetime.strptime(x[0], '%a, %d %b %Y %H:%M:%S %Z'))),
+    # 06 May 2013 23:36:07
+    (re.compile('^\d\d\s+\w\w\w\s+\d{4}\s+\d{2}:\d{2}:\d{2}$'),
+     lambda x: dt2ut(datetime.strptime(x[0], '%d %b %Y %H:%M:%S'))),
     # turn empty strings into 0!
     (re.compile('^\s*$'), lambda x: 0),
 ]

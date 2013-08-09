@@ -26,6 +26,13 @@ def md5hash(s):
     m.update(s.encode())
     return m.hexdigest()
 
+def humanize_size(s):
+    p = ['bytes', 'KB','MB','GB','TB']
+    while s > 1024 and len(p) > 1:
+        s /= 1024
+        p = p[1:]
+    return '{0:.2f} {1}'.format(s, p[0])
+
 @blueprint.route('/logout')
 def logout():
     session.pop('user_id')
@@ -73,57 +80,17 @@ def index():
     total_results = 0
     if 'user_id' in session and query:
         conn = engine.connect()
-        total_results = conn.execute(select([func.count(),tables.releases])).scalar()
+        total_results = conn.execute(select([func.count(),tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query))).scalar()
         sel = select([tables.releases]).where(tables.releases.c.name.like('%%%s%%' % query)).order_by(-tables.releases.c.date).limit(limit).offset(offset)
         res = conn.execute(sel)
         for row in res.fetchall():
             release = dict(row)
-            if release['file_count'] == 0: # hasn't been sized yet, use old dets to fill
-                sel = select([tables.files]).where(tables.files.c.release_id == row['id'])
-                file_count = 0
-                par2_count = 0
-                archive_count = 0
-                nfo_file = None
-                nzb_file = None
-                size = 0
-                _seg_where = []
-                _fg_where = []
-                for row_ in conn.execute(sel):
-                    # extend query for segments 
-                    _seg_where.append(tables.segments.c.file_id == row_['id'])
-                    _fg_where.append(tables.file_groups.c.file_id == row_['id'])
-                    file_count += 1
-                    fn = row_['name'].lower()
-                    if fn.endswith('.par2'):
-                        par2_count += 1
-                    elif fn.endswith('.rar') or re.match('^.+\.r\d\d$', fn) or re.match('^.+\.\d\d\d$', fn):
-                        archive_count += 1
-                    elif fn.endswith('.nfo'):
-                        nfo_file = row_['id']
-                    elif fn.endswith('nzb'):
-                        nzb_file = row_['id']
-                # TODO: this is super quick after indexing
-                sel = select([tables.segments]).where(or_(*_seg_where))
-                for row_ in conn.execute(sel):
-                    size += row_['size']
-                #release['size'] = "UNKNOWN"
-                release['size'] = size
-                sel = select([tables.file_groups.c.group]).where(or_(*_fg_where)).distinct()
-                groups = [x[0] for x in conn.execute(sel).fetchall()]
-                release['groups'] = groups
-                release['file_count'] = file_count
-                release['archive_file_count'] = archive_count
-                release['par2_file_count'] = par2_count
-                if nfo_file:
-                    release['nfo'] = nfo_file
-                if nzb_file:
-                    release['nzb'] = nzb_file
-            else:
-                sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
-                groups = [x[0] for x in conn.execute(sel).fetchall()]
-                release['groups'] = groups
+            sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
+            groups = [x[0] for x in conn.execute(sel).fetchall()]
+            release['groups'] = groups
             age = humanize_date_difference(release['date'])
             release['age'] = age
+            release['size'] = humanize_size(release['size'])
             releases.append(release)
         res.close()
         conn.close()
@@ -160,6 +127,8 @@ def get_nzb(release_id):
     sel = select([tables.releases]).where(tables.releases.c.id == release_id)
     release = conn.execute(sel).fetchone()
     files_part = ""
+    sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
+    groups_part = '\n'.join([nzb_group.format(group=x[0]) for x in conn.execute(sel).fetchall()])
     sel = select([tables.files]).where(tables.files.c.release_id == release_id)
     for f in conn.execute(sel):
         sel = select([tables.segments]).where(tables.segments.c.file_id == f['id']).order_by(tables.segments.c.number)
@@ -167,8 +136,6 @@ def get_nzb(release_id):
         for s in conn.execute(sel):
             segments_parts.append(nzb_segment.format(size=s['size'],number=s['number'],article_id=s['article_id']))
         segments_part = '\n'.join(segments_parts)
-        sel = select([tables.file_groups.c.group]).where(tables.file_groups.c.file_id == f['id']).distinct()
-        groups_part = '\n'.join([nzb_group.format(group=x[0]) for x in conn.execute(sel).fetchall()])
         files_part += nzb_file.format(poster=release['poster'], date=release['date'], subject=f['name'],
                                       groups=groups_part,segments=segments_part)
     return Response(nzb.format(release_name=release['name'],files=files_part), mimetype='application/x-nzb')

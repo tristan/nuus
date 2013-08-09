@@ -6,7 +6,7 @@ def create(*nums):
         ranges.append((group[0], group[-1]))
     return ranges
 
-def merge(cls, ranges):
+def merge(ranges):
     ranges = sorted(ranges)
     i = 1
     while i < len(ranges):

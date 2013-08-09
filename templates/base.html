@@ -12,17 +12,20 @@
       <div class="navbar navbar-static-top">
         <a class="navbar-brand" href="#">Nuus</a>
         <ul class="nav navbar-nav">
-          <li class="active"><a href="#">Home</a></li>
+          {% set active_nav = active_nav|default('index') -%}
+          <li{% if active_nav == 'index' %}  class="active"{% endif %}><a href="{{ url_for('nuus.index') }}">Home</a></li>
+          <li{% if active_nav == 'debug' %} class="active"{% endif %}><a href="{{ url_for('debug.list_pages') }}">Debug</a></li>
         </ul>
         <ul class="pull-right nav navbar-nav">
           {% if not user %}
           <li><a data-toggle="modal" href="#signInModal">Sign In</a></li>
           {% else %}
           <li><a data-toggle="modal" href="#optionsModal"><span class="glyphicon glyphicon-cog"></span></a></li>
-          <li><a data-toggle="modal" href="{{ url_for('.logout') }}"><span class="glyphicon glyphicon-off"></span></a></li>
+          <li><a data-toggle="modal" href="{{ url_for('nuus.logout') }}"><span class="glyphicon glyphicon-off"></span></a></li>
           {% endif %}
         </ul>
       </div>
+      <div class="alerts">
       {% with messages = get_flashed_messages(with_categories=True) %}
       {% for cat,msg in messages %}
       <div class="alert alert-{{ cat }}">
@@ -31,6 +34,7 @@
       </div>
       {% endfor %}
       {% endwith %}
+      </div>
       {% block content %}
       {% endblock content %}
     </div>
@@ -45,12 +49,12 @@
           <form id="optionsForm" method="post">
             <div class="modal-body">
               <div class="form-group">
-                <label for="inputUsername">Sabnzbd host URL</label>
-                <input type="text" class="form-control" name="sabnzbd_host" id="inputUsername" placeholder="URL..." value="{{ user.sabnzbd_host }}">
+                <label for="inputHost">Sabnzbd host URL</label>
+                <input type="text" class="form-control" name="sabnzbd_host" id="inputHost" placeholder="URL..." value="{{ user.sabnzbd_host }}">
               </div>
               <div class="form-group">
-                <label for="inputPassword">Sabnzbd API Key</label>
-                <input type="password" class="form-control" name="sabnzbd_apikey" id="inputPassword" placeholder="API Key..."{% if user.sabnzbd_apikey %} value="{{ user.sabnzbd_apikey }}"{% endif %}>
+                <label for="inputAPIKey">Sabnzbd API Key</label>
+                <input type="text" class="form-control" name="sabnzbd_apikey" id="inputAPIKey" placeholder="API Key..."{% if user.sabnzbd_apikey %} value="{{ user.sabnzbd_apikey }}"{% endif %}>
               </div>
             </div>
             <div class="modal-footer">
@@ -91,9 +95,16 @@
     {% endif %}
     <script src="http://code.jquery.com/jquery.js"></script>
     <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/bootstrap/js/jquery.bootstrap-growl.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/nuus.js') }}"></script>
     <script type="text/javascript">
       {% if not user %}
       $(function() { $("#signInModal").modal('show'); });
+      {% else %}
+      sabnzbd = {
+      host: "{{ user.sabnzbd_host }}",
+      apikey: "{{ user.sabnzbd_apikey }}"
+      };
       {% endif %}
     </script>
   </body>

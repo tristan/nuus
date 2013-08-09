@@ -180,28 +180,38 @@ def beta_to_database(group, releases):
             s = (tables.files.c.release_id == rls['id']) & (tables.files.c.name == fn)
             fsel = (fsel | s) if fsel else s
 
-if __name__ == '__main__':
-    group = sys.argv[1]
-    if group.startswith('a.b.'):
-        group = 'alt.binaries.' + group[4:]
+def run_single(group, fn):
+    print('parsing %s' % fn, end=' ')
+    sys.stdout.flush()
+    start_time = time.time()
+    with gzip.open(os.path.join(BLOCK_STORAGE_DIR, fn), 'r') as f:
+        articles = pickle.load(f)
+    releases = parse_articles(articles)
+    while True:
+        try:
+            nr, nf, ns = to_database(group, releases)
+            print('releases: %d, files: %d, segments: %d' % (nr, nf, ns), end=' ')
+        except OperationalError as e:
+            print(e)
+            print('retrying')
+            continue
+        break
+    shutil.move(os.path.join(BLOCK_STORAGE_DIR, fn), os.path.join(BLOCK_STORAGE_DIR, 'complete', fn))
+    print('took: %dm%ds' % date_deltas(time.time() - start_time)[2:])
+    return nr, nf, ns
+
+def run_group(groups):
+    tnr = tnf = tns = 0
     for fn in os.listdir(BLOCK_STORAGE_DIR):
         m = BLOCK_FILE_REGEX.match(fn)
-        if not m or m.group('group') != group:
+        if not m or (groups and not (m.group('group') in groups)):
             continue
-        print(fn, end=' ')
-        sys.stdout.flush()
-        start_time = time.time()
-        with gzip.open(os.path.join(BLOCK_STORAGE_DIR, fn), 'r') as f:
-            articles = pickle.load(f)
-        releases = parse_articles(articles)
-        while True:
-            try:
-                nr, nf, ns = to_database(group, releases)
-                print('releases: %d, files: %d, segments: %d' % (nr, nf, ns), end=' ')
-            except OperationalError as e:
-                print(e)
-                print('retrying')
-                continue
-            break
-        shutil.move(os.path.join(BLOCK_STORAGE_DIR, fn), os.path.join(BLOCK_STORAGE_DIR, 'complete', fn))
-        print('took: %dm%ds' % date_deltas(time.time() - start_time)[2:])
+        nr, nf, ns = run_single(m.group('group'), fn)
+        tnr += nr
+        tnf += nf
+        tns += ns
+    return (tnr, tnf, tns)
+
+if __name__ == '__main__':
+    groups = ['alt.binaries.' + g[4:] if g.startswith('a.b.') else g for g in sys.argv[1:]]
+    run_group(groups)

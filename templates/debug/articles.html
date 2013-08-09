@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% set active_nav = "debug" %}
+{% block content %}
+{% if filename %}
+<h3><a href="{{ url_for('.get_prev_file', filename=filename, filter=filter) }}">&laquo;</a> {{ filename }} <a href="{{ url_for('.get_next_file', filename=filename, filter=filter) }}">&raquo;</a></h3>
+{% else %}
+<h3>{{ group }}</h3>
+{% endif %}
+{% if articles|count == 0 %}
+<pre>No articles found</pre>
+{% endif %}
+<table class="table table-hover table-condenced" style="font-size: 10px;">
+  {% for a in articles %}
+  <tr>
+    <td colspan="5">
+      <a href="{{ url_for('debug.get_article', message_id=a['message-id']) }}">{{ a['subject'] }}</a>
+    </td>
+  </tr>
+  <tr>
+    <td>{{ a.from }}</td><td>{{ a.date }}</td><td>{{ a[':bytes'] }}</td><td>{{ a['message-id'] }}</td><td>{{ a.xref }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

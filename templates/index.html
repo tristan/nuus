@@ -9,7 +9,7 @@
 
   {% if results %}
   <p></p>
-  <div class="text-right"><small>showing {{ offset+1 }} - {{ offset + (results|count) }} of {{ total_results }} results</small></div>
+  <div class="text-right"><small>{% if offset > 1 %}<a href="{{ url_for('.index', query=query, offset=offset-(results|count),limit=(results|count)) }}">&laquo;</a> {% endif %}showing {{ offset+1 }} - {{ offset + (results|count) }} of {{ total_results }} results{% if offset + (results|count) < total_results %} <a href="{{ url_for('.index', query=query, offset=offset+(results|count),limit=(results|count)) }}">&raquo;</a>{% endif %}</small></div>
   <table class="table table-hover table-condenced">
     <thead><td>Name</td><td></td><td>Files</td><td>Size</td><td>Group(s)</td><td>Age</td></thead>
     {% for r in results %}
@@ -18,7 +18,7 @@
       <td style="width: 55px;">
         <a data-toggle="tooltip" title="download nzb" href="{{ url_for('.get_nzb', release_id=r.id) }}"><i class="glyphicon glyphicon-download"></i></a>
         {% if user.sabnzbd_apikey %}
-        <a data-toggle="tooltip" title="send to sabnzbd" href="{{ url_for('.get_nzb', release_id=r.id) }}"><i class="glyphicon glyphicon-circle-arrow-down"></i></a>
+        <a data-toggle="tooltip" title="send to sabnzbd" href="#" data-nzbname="{{ r.name }}" data-name="{{ url_for('.get_nzb', release_id=r.id,_external=True) }}"><img src="{{ url_for('static', filename='vendor/sabnzbd/download.png') }}"></i></a>
         {% endif %}
       </td>
       <td>
