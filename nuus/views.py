@@ -2,6 +2,7 @@ from flask import Blueprint, url_for, render_template, request, redirect, sessio
 from hashlib import md5
 from nuus.utils import humanize_date_difference
 from nuus.database import engine, tables
+from nuus import nzb
 import os
 import re
 from sqlalchemy.sql import select, or_, func
@@ -97,47 +98,8 @@ def index():
     return render_template('index.html', user=user, query=query, results=releases, total_results=total_results, offset=offset, limit=limit)
 
 
-nzb = """<?xml version="1.0" encoding="iso-8859-1" ?>
-<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
-<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
-<head>
-<meta type="title">{release_name}</meta>
-</head>
-{files}
-</nzb>
-"""
-
-nzb_file = """<file poster="{poster}" date="{date}" subject="{subject}">
-<groups>
-{groups}
-</groups>
-<segments>
-{segments}
-</segments>
-</file>
-"""
-
-nzb_group = """<group>{group}</group>"""
-
-nzb_segment = """<segment bytes="{size}" number="{number}">{article_id}</segment>"""
-
 @blueprint.route('/nzb/<int:release_id>.nzb')
 def get_nzb(release_id):
-    conn = engine.connect()
-    sel = select([tables.releases]).where(tables.releases.c.id == release_id)
-    release = conn.execute(sel).fetchone()
-    files_part = ""
-    sel = select([tables.release_groups.c.group]).where(tables.release_groups.c.release_id == release['id']).distinct()
-    groups_part = '\n'.join([nzb_group.format(group=x[0]) for x in conn.execute(sel).fetchall()])
-    sel = select([tables.files]).where(tables.files.c.release_id == release_id)
-    for f in conn.execute(sel):
-        sel = select([tables.segments]).where(tables.segments.c.file_id == f['id']).order_by(tables.segments.c.number)
-        segments_parts = []
-        for s in conn.execute(sel):
-            segments_parts.append(nzb_segment.format(size=s['size'],number=s['number'],article_id=s['article_id']))
-        segments_part = '\n'.join(segments_parts)
-        files_part += nzb_file.format(poster=release['poster'], date=release['date'], subject=f['name'],
-                                      groups=groups_part,segments=segments_part)
-    return Response(nzb.format(release_name=release['name'],files=files_part), mimetype='application/x-nzb')
+    return Response(nzb.create_nzb(release_id), mimetype='application/x-nzb')
     # http://wiki.sabnzbd.org/api#toc28
     # http://miffy:9095/api?mode=addurl&apikey=d96490fab5f6e61b8fafd66e50886c26&name=http://localhost:5000/nzb/1000.nzb&nzbname=test

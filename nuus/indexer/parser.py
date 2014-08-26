@@ -46,6 +46,7 @@ from sqlalchemy.sql import select, bindparam
 from sqlalchemy.exc import OperationalError
 import sys
 import time
+import codecs
 
 BLOCK_STORAGE_DIR = nuus.app.config.get('BLOCK_STORAGE_DIR')
 BLOCK_FILE_REGEX = re.compile(nuus.app.config.get('BLOCK_FILE_REGEX'))
@@ -53,11 +54,50 @@ BLOCK_FILE_REGEX = re.compile(nuus.app.config.get('BLOCK_FILE_REGEX'))
 with open('patterns.txt') as f:
     PATTERNS = [re.compile(p, re.I) for p in [x for x in [x.strip() for x in f.readlines()] if not (x == '' or x.startswith('#'))]]
 
+def dump_unmatched():
+    lines_per_file = 1000000
+    lines = 0
+    utf8_w = codecs.getwriter('UTF-8')
+    def gen_dumpfile():
+        fcnt = 0
+        while True:
+            yield gzip.open('unmatched.%s.dump' % fcnt, 'w')
+            #yield utf8_w(f)
+            fcnt += 1
+    dumpfile = gen_dumpfile()
+    ouf = next(dumpfile)
+    for fn in os.listdir(os.path.join(BLOCK_STORAGE_DIR, 'complete')):
+        m = BLOCK_FILE_REGEX.match(fn)
+        if m:
+            with gzip.open(os.path.join(BLOCK_STORAGE_DIR, 'complete', fn)) as inf:
+                articles = pickle.load(inf)
+            for num,article in articles:
+                try:
+                    subject = article['subject'].encode('utf-8').decode('latin-1')
+                except:
+                    subject = article['subject']
+                for pat in PATTERNS:
+                    rlsmatch = pat.match(subject)
+                    if rlsmatch:
+                        break
+                if rlsmatch:
+                    continue
+                if lines >= lines_per_file:
+                    lines = 0
+                    ouf.close()
+                    ouf = next(dumpfile)
+                ouf.write(codecs.encode(subject + '\n', 'utf-8', 'surrogateescape'))
+                lines += 1
+
 def parse_articles(articles):
     """From the list of articles generate a map of releases->files->segments"""
     releases = dict()
     for n, article in articles:
-        subject = os.fsencode(article['subject']).decode('latin-1')
+        try:
+            subject = os.fsencode(article['subject']).decode('latin-1')
+        except:
+            print("ERROR PARSING UTF-8:", article['subject'].encode('utf-8'))
+            subject = article['subject']
         for pat in PATTERNS:
             rlsmatch = pat.match(subject)
             if rlsmatch:
@@ -213,5 +253,9 @@ def run_group(groups):
     return (tnr, tnf, tns)
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'dump':
+            dump_unmatched()
+            exit(0)
     groups = ['alt.binaries.' + g[4:] if g.startswith('a.b.') else g for g in sys.argv[1:]]
     run_group(groups)

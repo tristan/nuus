@@ -10,7 +10,7 @@ releases = Table(
     'releases', metadata,
     Column('id', Integer, primary_key=True),
     # 1000 is max length that can be indexed
-    Column('name', String(1000), index=True, nullable=False),
+    Column('name', String(1000), nullable=False),
     Column('poster', String(512)),
     Column('date', Integer),
     Column('total_parts', Integer),
@@ -20,6 +20,7 @@ releases = Table(
     Column('archive_file_count', Integer, default=0),
     Column('par2_file_count', Integer, default=0),
     Column('size', BIGINT, default=0),
+    Index('ix_releases', 'name', mysql_length=100),
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )
@@ -27,9 +28,10 @@ releases = Table(
 files = Table(
     'files', metadata,
     Column('id', Integer, primary_key=True),
-    Column('release_id', Integer, index=True, nullable=False),
-    Column('name', String(1024), index=True, nullable=False),
+    Column('release_id', Integer, nullable=False),
+    Column('name', String(1024), nullable=False),
     Column('total_parts', Integer),
+    Index('ix_files', 'release_id', 'name', mysql_length=dict(name=100)),
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )
@@ -74,6 +76,30 @@ users = Table(
     Column('password', String(32), nullable=False),
     Column('sabnzbd_host', String(256), default='http://127.0.0.1:8080/'),
     Column('sabnzbd_apikey', String(32)),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
+#### PVR TABLES
+
+shows = Table(
+    'shows', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(32)),
+    Column('quality', String(32)),
+    Column('group', String(32)),
+    Column('start', Integer),
+    mysql_engine='MyISAM',
+    mysql_charset='utf8'
+)
+
+episodes = Table(
+    'episodes', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('show_id', Integer, nullable=False),
+    Column('number', Integer),
+    Column('version', Integer, default=1),
+    Column('crc', String(8)),
     mysql_engine='MyISAM',
     mysql_charset='utf8'
 )

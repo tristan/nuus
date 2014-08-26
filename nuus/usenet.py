@@ -47,7 +47,7 @@ class UsenetConnection(object):
 
 
 class ConnectionPool(object):
-    def __init__(self, connection_class=UsenetConnection, max_connections=None, **connection_kwargs):
+    def __init__(self, connection_class=UsenetConnection, max_connections=2, **connection_kwargs):
         self.pid = os.getpid()
         self.max_connections = max_connections
         self.connection_kwargs = connection_kwargs

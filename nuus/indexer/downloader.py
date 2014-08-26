@@ -17,15 +17,20 @@ BLOCK_FILE_FORMAT = nuus.app.config.get('BLOCK_FILE_FORMAT')
 BLOCK_FILE_REGEX = re.compile(nuus.app.config.get('BLOCK_FILE_REGEX'))
 
 def download_headers(uuid, group, start, end):
-    fn = BLOCK_FILE_FORMAT.format(
-        group=group,start=start,end=end)
-    u = usenet.Usenet(connection_pool=usenet_pool)
-    articles = u.get_articles(group, start, end)
-    if articles:
-        with gzip.open(os.path.join(BLOCK_STORAGE_DIR, fn), 'w') as f:
-            pickle.dump(articles, f)
-    else:
-        fn = None
+    articles = []
+    fn = None
+    try:
+        fn = BLOCK_FILE_FORMAT.format(
+            group=group,start=start,end=end)
+        u = usenet.Usenet(connection_pool=usenet_pool)
+        articles = u.get_articles(group, start, end)
+        if articles:
+            with gzip.open(os.path.join(BLOCK_STORAGE_DIR, fn), 'w') as f:
+                pickle.dump(articles, f)
+        else:
+            fn = None
+    except Exception as e:
+        print('GOT:', e)
     return (uuid, len(articles), fn)
 
 def get_existing_blocks(group):
@@ -44,12 +49,15 @@ def get_existing_blocks(group):
     return ranges.merge(r)
 
 def generate_tasks(group, start_at=0, end_at=None, articles_per_task=5000, limit=None):
+    if (end_at is not None and start_at > end_at):
+        print('got start > end for: %s from %s -> %s' % (group, start_at, end_at))
+        return []
     u = usenet.Usenet(connection_pool=usenet_pool)
     tasks = []
     gi = u.group_info(group)
     if (gi.first == gi.last):
         print(group, 'has no articles!!!')
-        return tasks
+        raise Exception('no articles')
     st = max(gi.first, start_at)
     end_at = min(end_at, gi.last) if end_at else gi.last
     print('creating tasks for %s from %s -> %s' % (group, st, end_at))
@@ -63,7 +71,7 @@ def run_tasks(tasks):
     print('Starting header downloads with %s tasks' % len(tasks))
     start_time = time.time()
     new_articles = 0
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=10) as executor:
         futures = []
         # queue up tasks
         for task in tasks:
@@ -86,18 +94,21 @@ def run_tasks(tasks):
                         time_remaining(start_time, tasks_complete, len(tasks) - tasks_complete)))
     return (new_articles, time.time() - start_time)
 
-def run(groups, articles_per_task=100000):
+def run(groups, articles_per_task=20000):
     tasks = []
     for group in groups:
         if group.startswith('a.b.'):
             group = 'alt.binaries.' + group[4:]
         start_at = 0
         blocks = get_existing_blocks(group)
-        for i in range(1, len(blocks)):
-            tasks += generate_tasks(group, start_at=blocks[i-1][1]+1, end_at=blocks[i][0]-1, articles_per_task=articles_per_task)
-        if len(blocks):
-            start_at = blocks[-1][1]+1
-        tasks += generate_tasks(group, articles_per_task=articles_per_task, start_at=start_at)
+        try:
+            for i in range(1, len(blocks)):
+                tasks += generate_tasks(group, start_at=blocks[i-1][1]+1, end_at=blocks[i][0]-1, articles_per_task=articles_per_task)
+            if len(blocks):
+                start_at = blocks[-1][1]+1
+            tasks += generate_tasks(group, articles_per_task=articles_per_task, start_at=start_at)
+        except:
+            continue
     rval = run_tasks(tasks)
     print('... completed')
     return rval
