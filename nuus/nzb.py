@@ -1,5 +1,5 @@
 from nuus.database import engine, tables
-from sqlalchemy.sql import select
+from sqlalchemy.sql import select, text
 
 NZB = """<?xml version="1.0" encoding="iso-8859-1" ?>
 <!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
@@ -41,4 +41,27 @@ def create_nzb(release_id):
         segments_part = '\n'.join(segments_parts)
         files_part += NZB_FILE.format(poster=release['poster'], date=release['date'], subject=f['name'],
                                       groups=groups_part,segments=segments_part)
+    conn.close()
     return NZB.format(release_name=release['name'],files=files_part)
+
+def is_release_complete(release_id):
+    conn = engine.connect()
+    for row in conn.execute(
+            text("select releases.total_parts, count(*) from releases join files on files.release_id = releases.id and releases.id = :release_id group by files.release_id;"),
+            release_id=release_id).fetchall():
+        if row[0] != row[1]:
+            conn.close()
+            return False
+    parts = 0
+    tp = 0
+    for row in conn.execute(
+            text("select files.total_parts, count(*) from files join segments on files.id = segments.file_id and files.release_id = :release_id group by segments.file_id;"),
+            release_id=release_id).fetchall():
+        #if row[0] != row[1]:
+        #    conn.close()
+        #    return False        
+        tp += int(row[0])
+        parts += int(row[1])
+    conn.close()
+    # return true if we have at least 80% of the parts
+    return (parts * 1.0) / tp > 0.8

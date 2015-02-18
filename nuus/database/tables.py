@@ -85,7 +85,7 @@ users = Table(
 shows = Table(
     'shows', metadata,
     Column('id', Integer, primary_key=True),
-    Column('name', String(32)),
+    Column('name', String(64)),
     Column('quality', String(32)),
     Column('group', String(32)),
     Column('start', Integer),

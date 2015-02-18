@@ -44,6 +44,9 @@ import re
 import shutil
 from sqlalchemy.sql import select, bindparam
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import Insert
+ 
 import sys
 import time
 import codecs
@@ -53,6 +56,13 @@ BLOCK_FILE_REGEX = re.compile(nuus.app.config.get('BLOCK_FILE_REGEX'))
 
 with open('patterns.txt') as f:
     PATTERNS = [re.compile(p, re.I) for p in [x for x in [x.strip() for x in f.readlines()] if not (x == '' or x.startswith('#'))]]
+
+@compiles(Insert)
+def append_string(insert, compiler, **kw):
+    s = compiler.visit_insert(insert, **kw)
+    if 'append_string' in insert.kwargs:
+        return s + " " + insert.kwargs['append_string']
+    return s
 
 def dump_unmatched():
     lines_per_file = 1000000
@@ -182,7 +192,7 @@ def to_database(group, releases):
                     segments.append(segment)
                     new_segment_count += 1
             if len(segments):
-                conn.execute(tables.segments.insert(), segments)
+                conn.execute(tables.segments.insert(append_string=" on duplicate key update article_id=article_id"), segments)
         if not conn.execute(
                 select([tables.release_groups]).where((tables.release_groups.c.release_id == release['id']) & (tables.release_groups.c.group == group))
         ).fetchone():

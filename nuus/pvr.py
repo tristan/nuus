@@ -5,14 +5,14 @@ from sqlalchemy.sql import select
 from sqlalchemy.sql.expression import and_
 
 from nuus.database import engine, tables
-from nuus.nzb import create_nzb
+from nuus.nzb import create_nzb, is_release_complete
 
 from nuus.sabnzbd import SabnzbdClient
 
 from nuus import settings
 
 re_anime = re.compile(
-    '\[(?P<group>[^\]]+)\][\s\._]?(?P<name>.+?)[\s\._-]+(?P<episode>\d+)(?:v(?P<version>\d+))?(?:[\s\._]?[\[\(](?P<quality>.+?)[\]\)])?'
+    '\[(?P<group>[^\]]+)\][\s\._]?(?P<name>.+?)[\s\._-]+(?P<episode>\d{2,3})(?:v(?P<version>\d+))?(?:[\s\._]?[\[\(](?P<quality>.+?)[\]\)])?'
 )
 
 class Application(object):
@@ -20,10 +20,10 @@ class Application(object):
         conn = engine.connect()
         try:
             show = conn.execute(select([tables.shows]).where((tables.shows.c.name == name) & (tables.shows.c.group == group))).fetchone()
-            if show and quality == show.quality:
+            if show and quality == show['quality']:
                 raise Exception("[%s] %s already added." % (group, name))
             elif show:
-                show.quality = quality
+                show['quality'] = quality
             else:
                 conn.execute(tables.shows.insert(), name=name, group=group, quality=quality,
                              start=start)
@@ -37,7 +37,7 @@ class Application(object):
         conn = engine.connect()
         for show in conn.execute(select([tables.shows])):
             print('[%s] %s' % (show['group'], show['name']))
-            for ep in conn.execute(select([tables.episodes]).where(tables.shows.c.show_id == show['id'])):
+            for ep in conn.execute(select([tables.episodes]).where(tables.episodes.c.show_id == show['id'])):
                 print('\tepisode %s%s downloaded' % (ep['number'], '' if ep['version'] == 1 else 'v%s' % ep['version']))
         conn.close()
 
@@ -52,42 +52,62 @@ class Application(object):
                 show = None
                 m = re_anime.search(release['name'])
                 if m:
+                    m = m.groupdict()
+                    m['name'] = m['name'].replace('_', ' ').replace('.', ' ')
                     show = conn.execute(select([tables.shows]).where(
-                        and_(tables.shows.c.name == m.group('name'),
-                             tables.shows.c.group == m.group('group')))).fetchone()
+                        and_(tables.shows.c.name == m['name'],
+                             tables.shows.c.group == m['group']))).fetchone()
                     if show is None:
                         continue
                     episode = conn.execute(select([tables.episodes]).where(
                         and_(tables.episodes.c.show_id == show['id'],
-                             tables.episodes.c.number == int(m.group('episode'))))).fetchone()
+                             tables.episodes.c.number == int(m['episode'])))).fetchone()
                 else:
                     continue
-                if int(m.group('episode')) < show['start']:
+                if int(m['episode']) < show['start']:
                     continue  # don't add show 
-                    
+
+                if not is_release_complete(release['id']):
+                    print('incomplete match %s' % release['name'])
+                    continue
+
                 if episode is None:
+                    # check quality
+                    if show['quality'] is not None and m['quality'] != show['quality']:
+                        continue
+                    # we got what we want! insert!
                     conn.execute(tables.episodes.insert(), 
                         show_id=show.id,
-                        number=int(m.group('episode')), 
-                        version=1 if m.group('version') is None else int(m.group('version'))
+                        number=int(m['episode']), 
+                        version=1 if m['version'] is None else int(m['version'])
                     )
                     download_queue.append(
                         ('queuing [%s] %s - %s%s' % (
-                            show['group'], show['name'], m.group('episode'), '' if m.group('version') is None else 'v%s' % m.group('version')),
+                            show['group'], show['name'], m['episode'], '' if m['version'] is None else 'v%s' % m['version']),
                          release['name'], release['id']))
-                elif m.group('version') is not None and episode['version'] < int(m.group('version')):
+                elif m['version'] is not None and episode['version'] < int(m['version']):
                     conn.execute(tables.episodes.update().where(
                         tables.episodes.c.id == episode['id']).values(
-                            version = int(m.group('version'))))
+                            version = int(m['version'])))
                     download_queue.append(
                         ('queuing [%s] %s - %s%s' % (
-                            show['group'], show['name'], episode['number'], '' if m.group('version') is None else 'v%s' % m.group('version')),
+                            show['group'], show['name'], episode['number'], '' if m['version'] is None else 'v%s' % m['version']),
                          release['name'], release['id']))
         except:
             raise
         finally:
             conn.close()
         return download_queue
+
+    def check_match(self, group, name):
+        conn = engine.connect()
+        releases = conn.execute(select([tables.releases]).order_by(tables.releases.c.date.desc()))
+        for release in releases:
+            show = None
+            m = re_anime.search(release['name'])
+            if m and m.group('name') == name and m.group('group') == group:
+                print(release['name'], m.groupdict(), is_release_complete(release['id']))
+        conn.close()
 
 @click.group()
 def cli():
@@ -124,6 +144,13 @@ def run():
         #with open('%s.nzb' % ep[1], 'w') as f:
         #    f.write(nzb)
     print('done...')
+
+@cli.command()
+@click.argument('group')
+@click.argument('name')
+def check(group, name):
+    app = Application()
+    app.check_match(group, name)
 
 if __name__ == '__main__':
     cli()
