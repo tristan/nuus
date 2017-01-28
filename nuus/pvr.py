@@ -12,7 +12,8 @@ from nuus.sabnzbd import SabnzbdClient
 from nuus import settings
 
 re_anime = re.compile(
-    '\[(?P<group>[^\]]+)\][\s\._]?(?P<name>.+?)[\s\._-]+(?P<episode>\d{2,3})(?:v(?P<version>\d+))?(?:[\s\._]?[\[\(](?P<quality>.+?)[\]\)])?'
+    '\[(?P<group>[^\]]+)\][\s\._]?(?P<name>.+?)[\s\._]-[\s\._](?P<episode>\d{2,3})[\s\._](?:v(?P<version>\d+))?(?:[\s\._]?[\[\(](?P<quality>.+?)[\]\)])?'
+    #'\[(?P<group>[^\]]+)\][\s\._]?(?P<name>.+?)[\s\._-]+(?P<episode>\d{2,3})(?:v(?P<version>\d+))?(?:[\s\._]?[\[\(](?P<quality>.+?)[\]\)])?'
 )
 
 class Application(object):
@@ -65,7 +66,7 @@ class Application(object):
                 else:
                     continue
                 if int(m['episode']) < show['start']:
-                    continue  # don't add show 
+                    continue  # don't add show
 
                 if not is_release_complete(release['id']):
                     print('incomplete match %s' % release['name'])
@@ -76,9 +77,9 @@ class Application(object):
                     if show['quality'] is not None and m['quality'] != show['quality']:
                         continue
                     # we got what we want! insert!
-                    conn.execute(tables.episodes.insert(), 
+                    conn.execute(tables.episodes.insert(),
                         show_id=show.id,
-                        number=int(m['episode']), 
+                        number=int(m['episode']),
                         version=1 if m['version'] is None else int(m['version'])
                     )
                     download_queue.append(
@@ -141,8 +142,8 @@ def run():
         print(ep[0])
         nzb = create_nzb(ep[2])
         client.addfile(ep[1], nzb)
-        #with open('%s.nzb' % ep[1], 'w') as f:
-        #    f.write(nzb)
+        with open('nzb/%s.nzb' % ep[1], 'w') as f:
+            f.write(nzb)
     print('done...')
 
 @cli.command()
@@ -154,4 +155,3 @@ def check(group, name):
 
 if __name__ == '__main__':
     cli()
-

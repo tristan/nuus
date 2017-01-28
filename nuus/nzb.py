@@ -1,5 +1,6 @@
 from nuus.database import engine, tables
 from sqlalchemy.sql import select, text
+import cgi
 
 NZB = """<?xml version="1.0" encoding="iso-8859-1" ?>
 <!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
@@ -39,10 +40,10 @@ def create_nzb(release_id):
         for s in conn.execute(sel):
             segments_parts.append(NZB_SEGMENT.format(size=s['size'],number=s['number'],article_id=s['article_id']))
         segments_part = '\n'.join(segments_parts)
-        files_part += NZB_FILE.format(poster=release['poster'], date=release['date'], subject=f['name'],
+        files_part += NZB_FILE.format(poster=cgi.escape(release['poster']), date=release['date'], subject=cgi.escape(f['name']),
                                       groups=groups_part,segments=segments_part)
     conn.close()
-    return NZB.format(release_name=release['name'],files=files_part)
+    return NZB.format(release_name=cgi.escape(release['name']),files=files_part)
 
 def is_release_complete(release_id):
     conn = engine.connect()
@@ -59,7 +60,7 @@ def is_release_complete(release_id):
             release_id=release_id).fetchall():
         #if row[0] != row[1]:
         #    conn.close()
-        #    return False        
+        #    return False
         tp += int(row[0])
         parts += int(row[1])
     conn.close()

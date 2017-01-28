@@ -42,11 +42,12 @@ import pickle
 from pprint import pprint
 import re
 import shutil
+import traceback
 from sqlalchemy.sql import select, bindparam
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import Insert
- 
+
 import sys
 import time
 import codecs
@@ -55,14 +56,18 @@ BLOCK_STORAGE_DIR = nuus.app.config.get('BLOCK_STORAGE_DIR')
 BLOCK_FILE_REGEX = re.compile(nuus.app.config.get('BLOCK_FILE_REGEX'))
 
 with open('patterns.txt') as f:
-    PATTERNS = [re.compile(p, re.I) for p in [x for x in [x.strip() for x in f.readlines()] if not (x == '' or x.startswith('#'))]]
+    PATTERNS = [re.compile(p, re.I | re.U) for p in [x for x in [x.strip() for x in f.readlines()] if not (x == '' or x.startswith('#'))]]
 
-@compiles(Insert)
-def append_string(insert, compiler, **kw):
-    s = compiler.visit_insert(insert, **kw)
-    if 'append_string' in insert.kwargs:
-        return s + " " + insert.kwargs['append_string']
-    return s
+@compiles(Insert, 'mysql')
+def suffix_insert(insert, compiler, **kw):
+    stmt = compiler.visit_insert(insert, **kw)
+    if 'mysql_on_duplicate_key_update_cols' in insert.dialect_kwargs:
+        my_var = insert.kwargs['mysql_on_duplicate_key_update_cols']
+        if my_var is not None:
+            stmt += ' ON DUPLICATE KEY UPDATE %s=%s' % (my_var, my_var)
+    return stmt
+
+Insert.argument_for("mysql", "on_duplicate_key_update_cols", None)
 
 def dump_unmatched():
     lines_per_file = 1000000
@@ -139,7 +144,6 @@ def to_database(group, releases):
     release_groups_inserts=[]
     segments_inserts=[]
     new_release_count = new_file_count = new_segment_count = 0
-
     for rlskey in releases:
         release_name = rlskey[0]
         poster = rlskey[1]
@@ -183,26 +187,37 @@ def to_database(group, releases):
                 file = dict(file)
             segments = []
             for segment in releases[rlskey]['files'][file_name]['segments']:
-                seg = conn.execute(
+                rp = conn.execute(
                     select([tables.segments]).where(tables.segments.c.article_id == segment['article_id'])
-                ).fetchone()
-                if seg is None:
+                )
+                if rp.fetchone() is None:
                     segment['file_id'] = file['id']
                     release['size'] += segment['size']
                     segments.append(segment)
                     new_segment_count += 1
-            if len(segments):
-                conn.execute(tables.segments.insert(append_string=" on duplicate key update article_id=article_id"), segments)
-        if not conn.execute(
-                select([tables.release_groups]).where((tables.release_groups.c.release_id == release['id']) & (tables.release_groups.c.group == group))
-        ).fetchone():
+                else:
+                    rp.close()
+            # save segments in iterations to see if it stops the failures
+            while len(segments):
+                try:
+                    conn.execute(tables.segments.insert(mysql_on_duplicate_key_update_cols='article_id'), segments[:1000])
+                    segments = segments[1000:]
+                except OperationalError as e:
+                    print("FAILED WITH %s SEGS TO SAVE" % len(segments))
+                    raise
+        rp = conn.execute(
+            select([tables.release_groups]).where((tables.release_groups.c.release_id == release['id']) & (tables.release_groups.c.group == group))
+        )
+        if rp.fetchone() is None:
             conn.execute(tables.release_groups.insert(),release_id=release['id'],group=group)
+        else:
+            rp.close()
         conn.execute(tables.releases.update().where(tables.releases.c.id == release['id']).values(
             size=release['size'],date=release['date'],file_count=release['file_count'],
             nzb_file_id=release['nzb_file_id'],nfo_file_id=release['nfo_file_id'],
             par2_file_count=release['par2_file_count'],archive_file_count=release['archive_file_count']
         ))
-
+    conn.close()
     return (new_release_count, new_file_count, new_segment_count)
 
 def beta_to_database(group, releases):
@@ -242,8 +257,9 @@ def run_single(group, fn):
             nr, nf, ns = to_database(group, releases)
             print('releases: %d, files: %d, segments: %d' % (nr, nf, ns), end=' ')
         except OperationalError as e:
-            print(e)
-            print('retrying')
+            print("something went wrong...", e.connection_invalidated)
+            traceback.print_exc()
+            sys.exit(1)
             continue
         break
     shutil.move(os.path.join(BLOCK_STORAGE_DIR, fn), os.path.join(BLOCK_STORAGE_DIR, 'complete', fn))
@@ -269,3 +285,4 @@ if __name__ == '__main__':
             exit(0)
     groups = ['alt.binaries.' + g[4:] if g.startswith('a.b.') else g for g in sys.argv[1:]]
     run_group(groups)
+    print("finished parsing!")

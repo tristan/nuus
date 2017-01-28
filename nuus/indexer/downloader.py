@@ -104,13 +104,13 @@ def run(groups, articles_per_task=20000):
         # check group's first and last
         u = usenet.Usenet(connection_pool=usenet_pool)
         gi = u.group_info(group)
-        if gi.first < blocks[0][0] or gi.last < blocks[-1][-1]:
+        #if len(blocks) and (gi.first < blocks[0][0] or gi.last < blocks[-1][-1]):
             # some weird shit has happened
-            print('GROUP STRUCTURE HAS CHANGED, FREAKING OUT!', blocks[0][0], blocks[-1][-1], 'changed to', gi.first, gi.last)
-            os.rename(BLOCK_STORAGE_DIR, '%s.%s' % (BLOCK_STORAGE_DIR, time.time()))
-            os.makedirs(os.path.join(BLOCK_STORAGE_DIR, 'complete'))
-            blocks = []
-            start_at = gi.first
+        #    print('GROUP STRUCTURE HAS CHANGED, FREAKING OUT!', blocks[0][0], blocks[-1][-1], 'changed to', gi.first, gi.last)
+        #    os.rename(BLOCK_STORAGE_DIR, '%s.%s' % (BLOCK_STORAGE_DIR, time.time()))
+        #    os.makedirs(os.path.join(BLOCK_STORAGE_DIR, 'complete'))
+        #    blocks = []
+        #    start_at = gi.first
         try:
             for i in range(1, len(blocks)):
                 tasks += generate_tasks(group, start_at=blocks[i-1][1]+1, end_at=blocks[i][0]-1, articles_per_task=articles_per_task)
